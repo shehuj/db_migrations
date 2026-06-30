@@ -1,0 +1,37 @@
+# Copy to terraform.tfvars (gitignored) or pass values via -var / TF_VAR_*.
+# Secrets (passwords) should come from CI secrets, never be committed.
+
+project     = "aws-db-migration"
+environment = "dev"
+aws_region  = "us-east-1"
+
+# Networking
+vpc_cidr             = "10.20.0.0/16"
+availability_zones   = ["us-east-1a", "us-east-1b"]
+public_subnet_cidrs  = ["10.20.1.0/24", "10.20.2.0/24"]
+private_subnet_cidrs = ["10.20.11.0/24", "10.20.12.0/24"]
+allowed_ssh_cidrs    = ["0.0.0.0/0"] # <-- restrict to your IP/CIDR
+
+# Source EC2
+ec2_instance_type = "t3.small"
+key_name          = "" # name of an existing EC2 key pair for SSH/Ansible
+
+# Database
+db_name = "appdb"
+
+# --- Secrets: prefer TF_VAR_source_db_admin_password etc. -------------------
+# source_db_admin_password = "REQUIRED"
+# dms_db_password          = "REQUIRED"
+# rds_admin_password       = "REQUIRED"
+
+# Target RDS
+rds_instance_class    = "db.t3.small"
+rds_allocated_storage = 20
+
+# DMS
+dms_replication_instance_class = "dms.t3.medium"
+dms_migration_type             = "full-load-and-cdc"
+dms_start_task                 = false
+
+# Monitoring
+alarm_email = "" # e.g. you@example.com

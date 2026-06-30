@@ -1,0 +1,80 @@
+---
+- name: Install MySQL server and Python driver
+  ansible.builtin.apt:
+    name:
+      - mysql-server
+      - python3-pymysql
+    state: present
+    update_cache: true
+
+- name: Ensure MySQL is running and enabled
+  ansible.builtin.service:
+    name: mysql
+    state: started
+    enabled: true
+
+- name: Configure binary logging for DMS CDC
+  ansible.builtin.template:
+    src: dms.cnf.j2
+    dest: /etc/mysql/mysql.conf.d/dms.cnf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart mysql
+
+- name: Apply MySQL configuration before provisioning
+  ansible.builtin.meta: flush_handlers
+
+- name: Create application database
+  community.mysql.mysql_db:
+    name: "{{ mysql_database }}"
+    state: present
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+
+- name: Create application user
+  community.mysql.mysql_user:
+    name: "{{ mysql_app_user }}"
+    password: "{{ mysql_app_password }}"
+    host: "%"
+    priv: "{{ mysql_database }}.*:ALL"
+    state: present
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+  no_log: true
+
+- name: Create DMS replication user (least privilege for CDC)
+  community.mysql.mysql_user:
+    name: "{{ mysql_dms_user }}"
+    password: "{{ mysql_dms_password }}"
+    host: "%"
+    priv:
+      "*.*": "SELECT,RELOAD,REPLICATION CLIENT,REPLICATION SLAVE"
+      "{{ mysql_database }}.*": "SELECT"
+    state: present
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+  no_log: true
+
+- name: Copy seed SQL to host
+  ansible.builtin.copy:
+    src: "{{ mysql_seed_file }}"
+    dest: /tmp/populate_db.sql
+    mode: "0640"
+
+- name: Load seed data
+  community.mysql.mysql_db:
+    name: "{{ mysql_database }}"
+    state: import
+    target: /tmp/populate_db.sql
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+
+- name: Verify binary logging is active
+  community.mysql.mysql_query:
+    query: "SHOW VARIABLES LIKE 'log_bin'"
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+  register: binlog_status
+
+- name: Assert binary logging is ON
+  ansible.builtin.assert:
+    that:
+      - binlog_status.query_result[0][0].Value | lower == 'on'
+    fail_msg: "Binary logging is not enabled; DMS CDC will not work."
+    success_msg: "Binary logging is enabled — source is ready for DMS."

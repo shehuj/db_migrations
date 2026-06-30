@@ -1,0 +1,21 @@
+---
+# Configure the source MySQL host so AWS DMS can perform full-load + CDC.
+#
+# Run:
+#   ansible-playbook site.yml \
+#     --extra-vars "mysql_app_password=... mysql_dms_password=..."
+- name: Configure source MySQL database for DMS migration
+  hosts: all
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Assert required secrets were provided
+      ansible.builtin.assert:
+        that:
+          - mysql_app_password is defined and mysql_app_password | length > 0
+          - mysql_dms_password is defined and mysql_dms_password | length > 0
+        fail_msg: "mysql_app_password and mysql_dms_password must be passed via --extra-vars."
+
+  roles:
+    - role: mysql_source
