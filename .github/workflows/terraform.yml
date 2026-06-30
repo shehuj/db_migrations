@@ -1,0 +1,190 @@
+name: Deploy
+
+# End-to-end deployment pipeline:
+#   plan  -> apply (Terraform infra) -> configure (Ansible source DB)
+#
+# Auth uses GitHub OIDC -> AWS IAM role (no long-lived keys). Configure these
+# repository settings / secrets:
+#   - vars.AWS_REGION            e.g. us-east-1
+#   - secrets.AWS_ROLE_ARN       IAM role trusting this repo via OIDC
+#   - secrets.TF_BACKEND_BUCKET  S3 bucket for remote state
+#   - secrets.TF_BACKEND_TABLE   DynamoDB table for state locking
+#   - secrets.SOURCE_DB_ADMIN_PASSWORD
+#   - secrets.DMS_DB_PASSWORD
+#   - secrets.RDS_ADMIN_PASSWORD
+#   - secrets.SSH_PRIVATE_KEY    PEM for the EC2 key pair (Ansible access)
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - "ansible/**"
+      - "scripts/**"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        type: choice
+        options: [dev, prod]
+        default: dev
+      run_ansible:
+        description: "Run Ansible source-DB configuration after apply"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # required for OIDC
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.9.5"
+  ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  # SOURCE_DB_ADMIN_PASSWORD is consumed by the Ansible step (not Terraform):
+  # the source admin account is created by the mysql_source role.
+  TF_VAR_dms_db_password: ${{ secrets.DMS_DB_PASSWORD }}
+  TF_VAR_rds_admin_password: ${{ secrets.RDS_ADMIN_PASSWORD }}
+
+jobs:
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    outputs:
+      env: ${{ env.ENVIRONMENT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
+            -backend-config="key=db-migrations/${ENVIRONMENT}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_BACKEND_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Plan
+        run: |
+          terraform plan -input=false -out=tfplan \
+            -var-file="environments/${ENVIRONMENT}.tfvars"
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ env.ENVIRONMENT }}
+          path: terraform/tfplan
+          retention-days: 5
+
+  apply:
+    name: Terraform Apply
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.env }} # enables required-reviewer gates
+    defaults:
+      run:
+        working-directory: terraform
+    outputs:
+      source_public_ip: ${{ steps.tf_out.outputs.source_public_ip }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
+            -backend-config="key=db-migrations/${ENVIRONMENT}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_BACKEND_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ env.ENVIRONMENT }}
+          path: terraform
+
+      - name: Terraform Apply
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Export outputs
+        id: tf_out
+        run: |
+          echo "source_public_ip=$(terraform output -raw source_ec2_public_ip)" >> "$GITHUB_OUTPUT"
+
+  configure:
+    name: Ansible Configure Source DB
+    needs: apply
+    if: ${{ github.event.inputs.run_ansible != 'false' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible + collections
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ansible-core>=2.16" boto3 botocore
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Load SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Wait for host SSH to come up
+        run: |
+          for i in $(seq 1 30); do
+            nc -z -w5 "${{ needs.apply.outputs.source_public_ip }}" 22 && exit 0
+            echo "waiting for SSH ($i)..."; sleep 10
+          done
+          echo "host did not become reachable"; exit 1
+
+      - name: Run playbook
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+        run: |
+          ansible-playbook site.yml \
+            --private-key ~/.ssh/id_rsa \
+            --extra-vars "mysql_source_app_password=${{ secrets.SOURCE_DB_ADMIN_PASSWORD }}" \
+            --extra-vars "mysql_source_dms_password=${{ secrets.DMS_DB_PASSWORD }}"

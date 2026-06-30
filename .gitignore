@@ -216,3 +216,40 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+###############################################################################
+# Terraform
+###############################################################################
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!terraform/environments/*.tfvars
+!**/*.tfvars.example
+*.tfplan
+tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl
+backend.hcl
+
+###############################################################################
+# Ansible
+###############################################################################
+*.retry
+ansible/inventory/*.ini
+ansible/collections/
+.vault_pass
+
+###############################################################################
+# Secrets / keys
+###############################################################################
+*.pem
+id_rsa
+id_rsa.*
+.vscode/

@@ -1,0 +1,77 @@
+name: CI
+
+# Static validation on every PR. No cloud credentials required.
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - "ansible/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.9.5"
+
+jobs:
+  terraform-validate:
+    name: Terraform fmt & validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+        working-directory: terraform
+
+      - name: terraform init (no backend)
+        run: terraform init -backend=false
+        working-directory: terraform
+
+      - name: terraform validate
+        run: terraform validate
+        working-directory: terraform
+
+  tflint:
+    name: tflint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+      - name: tflint
+        run: |
+          tflint --init
+          tflint --recursive
+        working-directory: terraform
+
+  ansible-lint:
+    name: ansible-lint & syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ansible-core>=2.16" ansible-lint
+          ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: ansible-lint
+        run: ansible-lint
+        working-directory: ansible
+
+      - name: Playbook syntax check
+        run: ansible-playbook site.yml --syntax-check -i localhost,
+        working-directory: ansible

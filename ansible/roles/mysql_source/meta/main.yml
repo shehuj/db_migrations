@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: mysql_source
+  author: db_migrations
+  description: Install and configure a MySQL source host for AWS DMS (full-load + CDC).
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+dependencies: []

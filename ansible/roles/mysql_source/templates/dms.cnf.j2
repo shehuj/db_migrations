@@ -1,0 +1,9 @@
+# Managed by Ansible (mysql_source role). Do not edit by hand.
+# Enables ROW-based binary logging required by AWS DMS change data capture.
+[mysqld]
+bind-address      = {{ mysql_source_bind_address }}
+server_id         = {{ mysql_source_server_id }}
+log_bin           = /var/log/mysql/mysql-bin.log
+binlog_format     = ROW
+binlog_row_image  = FULL
+binlog_expire_logs_seconds = {{ mysql_source_binlog_retention_hours * 3600 }}

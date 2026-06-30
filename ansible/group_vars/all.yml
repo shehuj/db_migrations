@@ -1,0 +1,11 @@
+---
+# Host-wide overrides. Non-secret defaults live in the role
+# (roles/mysql_source/defaults). Secrets are passed at runtime via
+# `--extra-vars` from CI secrets (or an ansible-vault file) and are never
+# committed:
+#
+#   mysql_source_app_password   # application admin password
+#   mysql_source_dms_password   # DMS replication user password
+#
+# Override role defaults here if you need environment-specific values, e.g.:
+# mysql_source_database: appdb
