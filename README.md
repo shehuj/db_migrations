@@ -41,6 +41,7 @@ full load, then streams ongoing changes from the MySQL binary log to RDS.
 │   ├── main.tf                # root module composition
 │   ├── variables.tf / outputs.tf / locals.tf / providers.tf / versions.tf
 │   ├── backend.tf             # partial S3 backend (configured at init)
+│   ├── bootstrap/             # one-time: state backend + OIDC provider + deploy role
 │   ├── environments/          # dev.tfvars / prod.tfvars
 │   └── modules/
 │       ├── networking/        # VPC, subnets, NAT, route tables, security groups
@@ -67,10 +68,42 @@ full load, then streams ongoing changes from the MySQL binary log to RDS.
 ## Prerequisites
 
 - Terraform >= 1.5, Ansible (`ansible-core` >= 2.16)
-- An AWS account + credentials with permissions to create the resources above
-- An S3 bucket + DynamoDB table for remote state/locking
-- (For CI) an IAM role trusting the repo via GitHub OIDC
+- An AWS account + admin credentials for the one-time bootstrap below
 - An EC2 key pair if you want SSH/Ansible access from your laptop
+
+## First-time setup (bootstrap)
+
+The CI pipeline needs three things it cannot create for itself: a remote-state
+backend (S3 + DynamoDB), a GitHub OIDC provider, and an IAM role for Actions to
+assume. The `terraform/bootstrap/` stack provisions them. Run it **once**,
+locally, with admin credentials (it uses local state — no backend):
+
+```bash
+cd terraform/bootstrap
+terraform init
+terraform apply -var github_owner=<your-org> -var github_repo=db_migrations
+```
+
+Then push the outputs into the repo (the stack prints the exact `gh` commands as
+the `gh_cli_commands` output):
+
+```bash
+gh secret set AWS_ROLE_ARN       --body "$(terraform output -raw deploy_role_arn)"
+gh secret set TF_BACKEND_BUCKET  --body "$(terraform output -raw state_bucket)"
+gh secret set TF_BACKEND_TABLE   --body "$(terraform output -raw lock_table)"
+gh variable set AWS_REGION       --body "$(terraform output -raw region)"
+# Database secrets (choose strong values):
+gh secret set DMS_DB_PASSWORD          --body '...'
+gh secret set RDS_ADMIN_PASSWORD       --body '...'
+gh secret set SOURCE_DB_ADMIN_PASSWORD --body '...'
+gh secret set SSH_PRIVATE_KEY < path/to/keypair.pem
+```
+
+The deploy pipeline's `preflight` job fails fast with a clear message if any of
+these secrets are missing, so you'll know immediately if something wasn't set.
+
+> If your account already has a GitHub OIDC provider, apply with
+> `-var create_oidc_provider=false`.
 
 ## Quick start (local)
 

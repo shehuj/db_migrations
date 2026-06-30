@@ -52,8 +52,34 @@ env:
   TF_VAR_rds_admin_password: ${{ secrets.RDS_ADMIN_PASSWORD }}
 
 jobs:
+  preflight:
+    name: Preflight (verify configuration)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required secrets are configured
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          TF_BACKEND_BUCKET: ${{ secrets.TF_BACKEND_BUCKET }}
+          TF_BACKEND_TABLE: ${{ secrets.TF_BACKEND_TABLE }}
+          DMS_DB_PASSWORD: ${{ secrets.DMS_DB_PASSWORD }}
+          RDS_ADMIN_PASSWORD: ${{ secrets.RDS_ADMIN_PASSWORD }}
+        run: |
+          missing=()
+          for name in AWS_ROLE_ARN TF_BACKEND_BUCKET TF_BACKEND_TABLE \
+                      DMS_DB_PASSWORD RDS_ADMIN_PASSWORD; do
+            if [ -z "${!name}" ]; then missing+=("$name"); fi
+          done
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing required repository secrets: ${missing[*]}"
+            echo "These are created by the one-time bootstrap stack in terraform/bootstrap/."
+            echo "See the 'First-time setup' section of the README for the exact commands."
+            exit 1
+          fi
+          echo "All required secrets are present."
+
   plan:
     name: Terraform Plan
+    needs: preflight
     runs-on: ubuntu-latest
     defaults:
       run:
