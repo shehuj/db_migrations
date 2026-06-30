@@ -185,5 +185,5 @@ jobs:
         run: |
           ansible-playbook site.yml \
             --private-key ~/.ssh/id_rsa \
-            --extra-vars "mysql_app_password=${{ secrets.SOURCE_DB_ADMIN_PASSWORD }}" \
-            --extra-vars "mysql_dms_password=${{ secrets.DMS_DB_PASSWORD }}"
+            --extra-vars "mysql_source_app_password=${{ secrets.SOURCE_DB_ADMIN_PASSWORD }}" \
+            --extra-vars "mysql_source_dms_password=${{ secrets.DMS_DB_PASSWORD }}"

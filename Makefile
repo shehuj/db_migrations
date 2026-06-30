@@ -36,8 +36,8 @@ destroy: ## terraform destroy for ENV
 configure: ## Run Ansible against the provisioned source host
 	cd $(ANSIBLE_DIR) && ansible-galaxy collection install -r requirements.yml && \
 		ansible-playbook site.yml \
-		  --extra-vars "mysql_app_password=$$SOURCE_DB_ADMIN_PASSWORD" \
-		  --extra-vars "mysql_dms_password=$$DMS_DB_PASSWORD"
+		  --extra-vars "mysql_source_app_password=$$SOURCE_DB_ADMIN_PASSWORD" \
+		  --extra-vars "mysql_source_dms_password=$$DMS_DB_PASSWORD"
 
 clean: ## Remove local terraform plan artifacts
 	find $(TF_DIR) -name tfplan -delete

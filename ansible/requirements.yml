@@ -3,7 +3,6 @@
 collections:
   - name: amazon.aws
     version: ">=7.0.0"
-  - name: community.mysql
-    version: ">=3.8.0"
-  - name: community.general
-    version: ">=8.0.0"
+  # Canonical successor to community.mysql (ansible-namespace migration).
+  - name: ansible.mysql
+    version: ">=5.0.0"

@@ -1,19 +1,11 @@
 ---
-# Defaults applied to every host. Secrets are NOT stored here — they are passed
-# at runtime via `--extra-vars` from CI secrets (or an ansible-vault file).
-
-mysql_database: appdb
-
-# Application admin user (full access to the app schema)
-mysql_app_user: admin
-# mysql_app_password: supplied via --extra-vars
-
-# Dedicated DMS user (least privilege needed for CDC)
-mysql_dms_user: dms_user
-# mysql_dms_password: supplied via --extra-vars
-
-# CDC requires a unique server id and ROW-based binary logging.
-mysql_server_id: 1
-
-# Path to the seed SQL (relative to the repo root, copied to the host).
-mysql_seed_file: "{{ playbook_dir }}/../scripts/populate_db.sql"
+# Host-wide overrides. Non-secret defaults live in the role
+# (roles/mysql_source/defaults). Secrets are passed at runtime via
+# `--extra-vars` from CI secrets (or an ansible-vault file) and are never
+# committed:
+#
+#   mysql_source_app_password   # application admin password
+#   mysql_source_dms_password   # DMS replication user password
+#
+# Override role defaults here if you need environment-specific values, e.g.:
+# mysql_source_database: appdb
