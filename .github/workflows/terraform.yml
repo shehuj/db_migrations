@@ -5,7 +5,7 @@ name: Deploy
 #
 # Auth uses GitHub OIDC -> AWS IAM role (no long-lived keys). Configure these
 # repository settings / secrets:
-#   - vars.AWS_REGION            e.g. us-east-1
+#   - vars.AWS_REGION            e.g. us-east-1 (optional; defaults to us-east-1)
 #   - secrets.AWS_ROLE_ARN       IAM role trusting this repo via OIDC
 #   - secrets.TF_BACKEND_BUCKET  S3 bucket for remote state
 #   - secrets.TF_BACKEND_TABLE   DynamoDB table for state locking
@@ -44,7 +44,8 @@ concurrency:
 env:
   TF_VERSION: "1.9.5"
   ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
-  AWS_REGION: ${{ vars.AWS_REGION }}
+  # Falls back to us-east-1 when the repo variable AWS_REGION is not set.
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   # SOURCE_DB_ADMIN_PASSWORD is consumed by the Ansible step (not Terraform):
   # the source admin account is created by the mysql_source role.
   TF_VAR_dms_db_password: ${{ secrets.DMS_DB_PASSWORD }}
