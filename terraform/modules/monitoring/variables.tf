@@ -19,11 +19,6 @@ variable "rds_instance_id" {
   type        = string
 }
 
-variable "dms_replication_task_arn" {
-  description = "DMS replication task ARN (for reference/dashboards)."
-  type        = string
-}
-
 variable "tags" {
   description = "Tags applied to all resources."
   type        = map(string)

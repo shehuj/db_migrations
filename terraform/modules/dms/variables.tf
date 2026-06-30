@@ -58,21 +58,6 @@ variable "target_endpoint" {
   sensitive = true
 }
 
-variable "dms_vpc_role_arn" {
-  description = "ARN of the dms-vpc-role (forces dependency ordering)."
-  type        = string
-}
-
-variable "dms_cloudwatch_role_arn" {
-  description = "ARN of the dms-cloudwatch-logs-role (forces dependency ordering)."
-  type        = string
-}
-
-variable "dms_access_for_endpoint_arn" {
-  description = "ARN of the DMS endpoint access role."
-  type        = string
-}
-
 variable "tags" {
   description = "Tags applied to all resources."
   type        = map(string)

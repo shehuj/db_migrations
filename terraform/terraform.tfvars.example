@@ -19,10 +19,10 @@ key_name          = "" # name of an existing EC2 key pair for SSH/Ansible
 # Database
 db_name = "appdb"
 
-# --- Secrets: prefer TF_VAR_source_db_admin_password etc. -------------------
-# source_db_admin_password = "REQUIRED"
-# dms_db_password          = "REQUIRED"
-# rds_admin_password       = "REQUIRED"
+# --- Secrets: prefer TF_VAR_* env vars over this file -----------------------
+# dms_db_password    = "REQUIRED"  # DMS source replication user
+# rds_admin_password = "REQUIRED"  # target RDS master password
+# (The source MySQL admin password is set via Ansible, not Terraform.)
 
 # Target RDS
 rds_instance_class    = "db.t3.small"

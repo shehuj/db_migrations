@@ -108,17 +108,9 @@ variable "db_port" {
   default     = 3306
 }
 
-variable "source_db_admin_user" {
-  description = "Admin user on the source MySQL host."
-  type        = string
-  default     = "admin"
-}
-
-variable "source_db_admin_password" {
-  description = "Admin password on the source MySQL host. Provide via TF_VAR / CI secret, never commit."
-  type        = string
-  sensitive   = true
-}
+# NOTE: the source MySQL *admin* user/password are not Terraform-managed — that
+# account is created by the Ansible mysql_source role. Terraform only needs the
+# dedicated DMS replication credentials below for the DMS source endpoint.
 
 variable "dms_db_user" {
   description = "Dedicated MySQL user DMS uses to read the source (needs REPLICATION privileges)."

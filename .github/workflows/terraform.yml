@@ -45,7 +45,8 @@ env:
   TF_VERSION: "1.9.5"
   ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
   AWS_REGION: ${{ vars.AWS_REGION }}
-  TF_VAR_source_db_admin_password: ${{ secrets.SOURCE_DB_ADMIN_PASSWORD }}
+  # SOURCE_DB_ADMIN_PASSWORD is consumed by the Ansible step (not Terraform):
+  # the source admin account is created by the mysql_source role.
   TF_VAR_dms_db_password: ${{ secrets.DMS_DB_PASSWORD }}
   TF_VAR_rds_admin_password: ${{ secrets.RDS_ADMIN_PASSWORD }}
 

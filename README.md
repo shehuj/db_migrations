@@ -76,9 +76,9 @@ full load, then streams ongoing changes from the MySQL binary log to RDS.
 
 ```bash
 # 1. Provide secrets via environment (never commit these)
-export TF_VAR_source_db_admin_password='...'
-export TF_VAR_dms_db_password='...'
-export TF_VAR_rds_admin_password='...'
+export TF_VAR_dms_db_password='...'        # DMS source replication user
+export TF_VAR_rds_admin_password='...'     # target RDS master password
+export SOURCE_DB_ADMIN_PASSWORD='...'      # source admin (used by Ansible only)
 
 # 2. Configure the remote state backend
 cp terraform/backend.hcl.example terraform/backend.hcl   # edit bucket/table
@@ -89,7 +89,6 @@ make plan ENV=dev
 make apply ENV=dev
 
 # 4. Configure the source MySQL host with Ansible
-export SOURCE_DB_ADMIN_PASSWORD="$TF_VAR_source_db_admin_password"
 export DMS_DB_PASSWORD="$TF_VAR_dms_db_password"
 make configure
 ```

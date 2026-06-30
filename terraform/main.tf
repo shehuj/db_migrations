@@ -88,22 +88,19 @@ module "dms" {
     password      = var.rds_admin_password
   }
 
-  dms_vpc_role_arn            = module.iam.dms_vpc_role_arn
-  dms_cloudwatch_role_arn     = module.iam.dms_cloudwatch_role_arn
-  dms_access_for_endpoint_arn = module.iam.dms_access_for_endpoint_role_arn
-  tags                        = local.common_tags
+  tags = local.common_tags
 
-  # The VPC management roles must exist before the replication subnet group.
+  # DMS in a VPC requires the account-level dms-vpc-role / dms-cloudwatch-logs-role
+  # (created by the iam module) to exist before the replication subnet group.
   depends_on = [module.iam]
 }
 
 module "monitoring" {
   source = "./modules/monitoring"
 
-  name_prefix              = local.name_prefix
-  alarm_email              = var.alarm_email
-  ec2_instance_id          = module.ec2.instance_id
-  rds_instance_id          = module.rds.instance_id
-  dms_replication_task_arn = module.dms.replication_task_arn
-  tags                     = local.common_tags
+  name_prefix     = local.name_prefix
+  alarm_email     = var.alarm_email
+  ec2_instance_id = module.ec2.instance_id
+  rds_instance_id = module.rds.instance_id
+  tags            = local.common_tags
 }
