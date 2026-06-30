@@ -109,7 +109,7 @@ Required repository configuration:
 
 | Type | Name | Purpose |
 | --- | --- | --- |
-| Variable | `AWS_REGION` | Deployment region |
+| Variable | `AWS_REGION` | Deployment region (optional; defaults to `us-east-1`) |
 | Secret | `AWS_ROLE_ARN` | IAM role assumed via OIDC |
 | Secret | `TF_BACKEND_BUCKET` / `TF_BACKEND_TABLE` | Remote state + lock |
 | Secret | `SOURCE_DB_ADMIN_PASSWORD` / `DMS_DB_PASSWORD` / `RDS_ADMIN_PASSWORD` | DB credentials |
