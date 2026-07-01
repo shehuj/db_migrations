@@ -26,8 +26,9 @@ module "networking" {
 module "iam" {
   source = "./modules/iam"
 
-  name_prefix = local.name_prefix
-  tags        = local.common_tags
+  name_prefix              = local.name_prefix
+  manage_dms_service_roles = var.manage_dms_service_roles
+  tags                     = local.common_tags
 }
 
 module "ec2" {

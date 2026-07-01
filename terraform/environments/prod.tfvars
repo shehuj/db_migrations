@@ -4,6 +4,9 @@ ec2_instance_type = "t3.large"
 
 allowed_ssh_cidrs = [] # rely on SSM, no public SSH in prod
 
+# Set false if this account already has dms-vpc-role / dms-cloudwatch-logs-role.
+manage_dms_service_roles = true
+
 rds_instance_class      = "db.r6g.large"
 rds_allocated_storage   = 100
 rds_multi_az            = true
