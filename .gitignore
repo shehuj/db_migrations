@@ -238,6 +238,10 @@ override.tf.json
 .terraform.lock.hcl
 backend.hcl
 
+# The bootstrap stack was removed; ignore it so an editor/IDE that resurrects
+# the file on disk can't reintroduce it into a commit or CI.
+terraform/bootstrap/
+
 ###############################################################################
 # Ansible
 ###############################################################################
