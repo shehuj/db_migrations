@@ -57,11 +57,13 @@ full load, then streams ongoing changes from the MySQL binary log to RDS.
 │   └── roles/mysql_source/    # install MySQL, enable ROW binlog, users, seed
 ├── scripts/
 │   ├── install_mysql.sh       # standalone fallback installer
-│   └── populate_db.sql        # sample schema + seed data
+│   ├── populate_db.sql        # sample schema + seed data
+│   └── teardown.sh            # complete per-env cleanup flow
 ├── docs/iam/                  # deploy-role DMS policy + service-role helper scripts
 ├── .github/workflows/
 │   ├── ci.yml                 # fmt/validate/tflint/ansible-lint on PRs
-│   └── terraform.yml          # preflight → plan → apply → configure (OIDC)
+│   ├── terraform.yml          # preflight → plan → apply → configure (OIDC)
+│   └── destroy.yml            # gated teardown (workflow_dispatch)
 └── Makefile                   # local convenience targets
 ```
 
@@ -221,9 +223,36 @@ Issues hit while standing this up, and their fixes:
 
 ## Cleanup
 
+A plain `terraform destroy` is not enough: a running DMS task blocks endpoint
+deletion, prod RDS has deletion protection, and an earlier replaced instance can
+linger as an orphan. Use the complete flow, which handles all of that.
+
+**Locally** (per environment — the account may have both `dev` and `prod`):
+
 ```bash
-make destroy ENV=dev
+export AWS_REGION=us-east-1
+export TF_BACKEND_BUCKET=... TF_BACKEND_TABLE=...        # or a terraform/backend.hcl
+export TF_VAR_dms_db_password=... TF_VAR_rds_admin_password=...
+make teardown ENV=dev      # -> scripts/teardown.sh dev
+make teardown ENV=prod
 ```
 
-> RDS deletion protection is enabled in `prod.tfvars`; disable it before
-> destroying a production stack.
+The teardown flow:
+
+1. **Stops** any running DMS replication task (so endpoints/instance can delete).
+2. **Clears** RDS deletion protection (a targeted apply — no-op if already off).
+3. **`terraform destroy`** removes every state-managed resource (VPC, EC2, RDS,
+   DMS, IAM roles incl. `dms-vpc-role`, monitoring).
+4. **Sweeps** any orphaned instances tagged `Project=aws-db-migration` for the env.
+
+**Via CI:** run the **Destroy** workflow (`workflow_dispatch`) — pick the
+environment and type `destroy` to confirm. It's gated by the GitHub Environment,
+so add required reviewers for `prod`.
+
+> **Not removed** (they're prerequisites you created, not repo resources): the
+> remote-state S3 bucket, the DynamoDB lock table, and the GitHub OIDC provider +
+> deploy IAM role. Delete those manually if you're done for good — and empty the
+> state bucket first (it's versioned).
+
+For a quick, raw destroy of a single environment with no pre/post steps:
+`make destroy ENV=dev`.

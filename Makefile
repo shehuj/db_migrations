@@ -30,8 +30,11 @@ plan: ## terraform plan for ENV (default dev)
 apply: ## terraform apply for ENV
 	cd $(TF_DIR) && terraform apply -var-file=environments/$(ENV).tfvars
 
-destroy: ## terraform destroy for ENV
+destroy: ## Raw terraform destroy for ENV (no pre/post steps)
 	cd $(TF_DIR) && terraform destroy -var-file=environments/$(ENV).tfvars
+
+teardown: ## Full cleanup for ENV: stop DMS, clear protection, destroy, sweep orphans
+	./scripts/teardown.sh $(ENV)
 
 configure: ## Run Ansible against the provisioned source host
 	cd $(ANSIBLE_DIR) && ansible-galaxy collection install -r requirements.yml && \
