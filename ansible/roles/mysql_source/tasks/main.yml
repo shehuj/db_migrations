@@ -16,7 +16,9 @@
 - name: Configure binary logging for DMS CDC
   ansible.builtin.template:
     src: dms.cnf.j2
-    dest: /etc/mysql/mysql.conf.d/dms.cnf
+    # 'zz-' prefix so this drop-in loads AFTER the packaged mysqld.cnf; otherwise
+    # mysqld.cnf's bind-address=127.0.0.1 overrides ours and DMS can't connect.
+    dest: /etc/mysql/mysql.conf.d/zz-dms.cnf
     owner: root
     group: root
     mode: "0644"
