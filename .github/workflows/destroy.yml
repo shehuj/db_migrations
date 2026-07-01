@@ -42,14 +42,16 @@ jobs:
       run:
         working-directory: terraform
     steps:
+      # Checkout first: the job's working-directory is 'terraform', which only
+      # exists after checkout. Any run step before this fails to even start.
+      - uses: actions/checkout@v4
+
       - name: Verify confirmation
         run: |
           if [ "${{ github.event.inputs.confirm }}" != "destroy" ]; then
             echo "::error::You must type 'destroy' to confirm."
             exit 1
           fi
-
-      - uses: actions/checkout@v4
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
