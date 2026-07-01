@@ -186,6 +186,12 @@ variable "dms_replication_instance_class" {
   default     = "dms.t3.medium"
 }
 
+variable "dms_engine_version" {
+  description = "DMS replication engine version. Empty lets AWS choose the current default (recommended)."
+  type        = string
+  default     = ""
+}
+
 variable "dms_allocated_storage" {
   description = "Storage (GiB) allocated to the DMS replication instance."
   type        = number

@@ -18,6 +18,12 @@ variable "replication_instance_class" {
   type        = string
 }
 
+variable "engine_version" {
+  description = "DMS replication engine version. Empty string lets AWS choose the current default."
+  type        = string
+  default     = ""
+}
+
 variable "allocated_storage" {
   description = "Storage in GiB for the replication instance."
   type        = number

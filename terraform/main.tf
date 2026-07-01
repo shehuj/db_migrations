@@ -69,6 +69,7 @@ module "dms" {
   subnet_ids                 = module.networking.private_subnet_ids
   vpc_security_group_ids     = [module.networking.dms_security_group_id]
   replication_instance_class = var.dms_replication_instance_class
+  engine_version             = var.dms_engine_version
   allocated_storage          = var.dms_allocated_storage
   migration_type             = var.dms_migration_type
   start_replication_task     = var.dms_start_task
