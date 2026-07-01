@@ -92,6 +92,26 @@ gh secret set SSH_PRIVATE_KEY        < path/to/keypair.pem          # used by An
 gh variable set AWS_REGION           --body 'us-east-1'             # optional (defaults to us-east-1)
 ```
 
+### Deploy-role permissions
+
+The IAM role in `AWS_ROLE_ARN` must be allowed to manage every service in the
+stack. DMS actions in particular are **not** covered by many baseline CI roles
+(and are excluded from `PowerUserAccess` only via IAM — DMS itself is included,
+but a hand-scoped role usually omits it). Attach the reference policy in
+[`docs/iam/deploy-role-dms-policy.json`](docs/iam/deploy-role-dms-policy.json)
+if you hit `AccessDeniedException` on `dms:*`:
+
+```bash
+aws iam put-role-policy \
+  --role-name <your-deploy-role> \
+  --policy-name db-migration-dms \
+  --policy-document file://docs/iam/deploy-role-dms-policy.json
+```
+
+The role also needs the usual VPC/EC2/RDS/CloudWatch/SNS/IAM permissions (to
+create the `dms-vpc-role` / `dms-cloudwatch-logs-role` and the EC2 instance
+profile), plus S3/DynamoDB access to the state backend.
+
 ## Quick start (local)
 
 ```bash
