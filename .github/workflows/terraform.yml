@@ -195,24 +195,43 @@ jobs:
           ansible-galaxy collection install -r requirements.yml
 
       - name: Load SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          # printf preserves the multi-line PEM and guarantees a trailing newline;
+          # writing from an env var (not an inline expression) avoids shell mangling.
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
+          # Fail fast with a clear message if the secret isn't a usable key.
+          if ! ssh-keygen -y -f ~/.ssh/id_rsa >/dev/null 2>&1; then
+            echo "::error::SSH_PRIVATE_KEY is not a valid, unencrypted private key."
+            echo "Store the PEM matching the instance key pair (no passphrase, OpenSSH/PEM format)."
+            exit 1
+          fi
 
       - name: Wait for host SSH to come up
+        env:
+          SOURCE_IP: ${{ needs.apply.outputs.source_public_ip }}
         run: |
           for i in $(seq 1 30); do
-            nc -z -w5 "${{ needs.apply.outputs.source_public_ip }}" 22 && exit 0
+            nc -z -w5 "$SOURCE_IP" 22 && exit 0
             echo "waiting for SSH ($i)..."; sleep 10
           done
           echo "host did not become reachable"; exit 1
 
       - name: Run playbook
+        # Target ONLY the instance Terraform just created (from the apply output),
+        # not every tagged instance the dynamic inventory might find (e.g. orphans).
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
+          SOURCE_IP: ${{ needs.apply.outputs.source_public_ip }}
+          APP_PW: ${{ secrets.SOURCE_DB_ADMIN_PASSWORD }}
+          DMS_PW: ${{ secrets.DMS_DB_PASSWORD }}
         run: |
           ansible-playbook site.yml \
+            -i "${SOURCE_IP}," \
+            -u ubuntu \
             --private-key ~/.ssh/id_rsa \
-            --extra-vars "mysql_source_app_password=${{ secrets.SOURCE_DB_ADMIN_PASSWORD }}" \
-            --extra-vars "mysql_source_dms_password=${{ secrets.DMS_DB_PASSWORD }}"
+            --extra-vars "mysql_source_app_password=${APP_PW}" \
+            --extra-vars "mysql_source_dms_password=${DMS_PW}"
