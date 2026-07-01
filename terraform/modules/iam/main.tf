@@ -59,6 +59,22 @@ resource "aws_iam_role_policy_attachment" "dms_cloudwatch" {
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AmazonDMSCloudWatchLogsRole"
 }
 
+# IAM is eventually consistent. When Terraform creates the DMS service roles in
+# the same apply as the replication instance, DMS may validate dms-vpc-role
+# before the role/policy has propagated and fail with "not configured properly".
+# Wait after the attachments so the roles are visible before DMS uses them.
+# (module.dms depends_on module.iam, so this gates the replication instance too.)
+resource "time_sleep" "dms_roles_propagation" {
+  count = var.manage_dms_service_roles ? 1 : 0
+
+  depends_on = [
+    aws_iam_role_policy_attachment.dms_vpc,
+    aws_iam_role_policy_attachment.dms_cloudwatch,
+  ]
+
+  create_duration = "60s"
+}
+
 # --- dms-access-for-endpoint : used by endpoints (e.g. S3/Secrets) -----------
 
 resource "aws_iam_role" "dms_access_for_endpoint" {
