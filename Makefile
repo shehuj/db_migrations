@@ -5,11 +5,7 @@ TF_DIR      ?= terraform
 ANSIBLE_DIR ?= ansible
 ENV         ?= dev
 
-.PHONY: help bootstrap fmt validate lint init plan apply destroy configure clean
-
-bootstrap: ## One-time: create state backend, OIDC provider, deploy role (needs OWNER/REPO)
-	cd $(TF_DIR)/bootstrap && terraform init && \
-		terraform apply -var github_owner=$(OWNER) -var github_repo=$(REPO)
+.PHONY: help fmt validate lint init plan apply destroy configure clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
