@@ -18,7 +18,7 @@ compose:
   ansible_host: public_ip_address
 
 keyed_groups:
-  - key: tags.Project
+  - key: ec2_tags.Project
     prefix: project
-  - key: tags.Environment
+  - key: ec2_tags.Environment
     prefix: env
