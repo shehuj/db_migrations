@@ -1,11 +1,11 @@
 output "dms_vpc_role_arn" {
-  description = "ARN of the dms-vpc-role."
-  value       = aws_iam_role.dms_vpc.arn
+  description = "ARN of the dms-vpc-role (null when not TF-managed)."
+  value       = one(aws_iam_role.dms_vpc[*].arn)
 }
 
 output "dms_cloudwatch_role_arn" {
-  description = "ARN of the dms-cloudwatch-logs-role."
-  value       = aws_iam_role.dms_cloudwatch.arn
+  description = "ARN of the dms-cloudwatch-logs-role (null when not TF-managed)."
+  value       = one(aws_iam_role.dms_cloudwatch[*].arn)
 }
 
 output "dms_access_for_endpoint_role_arn" {

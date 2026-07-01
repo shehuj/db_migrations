@@ -25,28 +25,37 @@ data "aws_iam_policy_document" "dms_assume" {
 }
 
 # --- dms-vpc-role : lets DMS manage ENIs in the VPC --------------------------
+#
+# dms-vpc-role and dms-cloudwatch-logs-role are fixed-name, account-level
+# singletons DMS looks up globally. If the account already has them (e.g. from a
+# prior DMS console use), set manage_dms_service_roles = false so Terraform does
+# not try to recreate them — DMS only needs them to exist, not to be TF-managed.
 
 resource "aws_iam_role" "dms_vpc" {
+  count              = var.manage_dms_service_roles ? 1 : 0
   name               = "dms-vpc-role"
   assume_role_policy = data.aws_iam_policy_document.dms_assume.json
   tags               = var.tags
 }
 
 resource "aws_iam_role_policy_attachment" "dms_vpc" {
-  role       = aws_iam_role.dms_vpc.name
+  count      = var.manage_dms_service_roles ? 1 : 0
+  role       = aws_iam_role.dms_vpc[0].name
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AmazonDMSVPCManagementRole"
 }
 
 # --- dms-cloudwatch-logs-role : lets DMS publish task logs -------------------
 
 resource "aws_iam_role" "dms_cloudwatch" {
+  count              = var.manage_dms_service_roles ? 1 : 0
   name               = "dms-cloudwatch-logs-role"
   assume_role_policy = data.aws_iam_policy_document.dms_assume.json
   tags               = var.tags
 }
 
 resource "aws_iam_role_policy_attachment" "dms_cloudwatch" {
-  role       = aws_iam_role.dms_cloudwatch.name
+  count      = var.manage_dms_service_roles ? 1 : 0
+  role       = aws_iam_role.dms_cloudwatch[0].name
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AmazonDMSCloudWatchLogsRole"
 }
 

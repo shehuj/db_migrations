@@ -112,6 +112,15 @@ The role also needs the usual VPC/EC2/RDS/CloudWatch/SNS/IAM permissions (to
 create the `dms-vpc-role` / `dms-cloudwatch-logs-role` and the EC2 instance
 profile), plus S3/DynamoDB access to the state backend.
 
+### Existing DMS service roles
+
+`dms-vpc-role` and `dms-cloudwatch-logs-role` are fixed-name, account-level
+singletons. If your account already has them (from a prior DMS console use or an
+earlier apply), Terraform will fail with `EntityAlreadyExists`. Set
+`manage_dms_service_roles = false` so Terraform skips creating them — DMS only
+requires that they exist. `environments/dev.tfvars` ships with this set to
+`false`; flip it to `true` for a fresh account that has never used DMS.
+
 ## Quick start (local)
 
 ```bash
