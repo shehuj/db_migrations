@@ -1,0 +1,109 @@
+name: Destroy
+
+# Manual teardown of one environment's stack. Mirrors the deploy pipeline's auth
+# (OIDC) and backend config. Requires typing "destroy" to confirm, and is gated
+# by the GitHub Environment (add required reviewers there for prod).
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to destroy"
+        type: choice
+        options: [dev, prod]
+        default: dev
+      confirm:
+        description: 'Type "destroy" to confirm'
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: destroy-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.9.5"
+  ENVIRONMENT: ${{ github.event.inputs.environment }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+  TF_BACKEND_BUCKET: ${{ secrets.TF_BACKEND_BUCKET }}
+  TF_BACKEND_TABLE: ${{ secrets.TF_BACKEND_TABLE }}
+  TF_VAR_dms_db_password: ${{ secrets.DMS_DB_PASSWORD }}
+  TF_VAR_rds_admin_password: ${{ secrets.RDS_ADMIN_PASSWORD }}
+
+jobs:
+  destroy:
+    name: Destroy ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }} # required-reviewer gate
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - name: Verify confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "destroy" ]; then
+            echo "::error::You must type 'destroy' to confirm."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Stop DMS replication tasks
+        run: |
+          for arn in $(aws dms describe-replication-tasks \
+              --query "ReplicationTasks[?starts_with(ReplicationTaskIdentifier,'aws-db-migration-${ENVIRONMENT}')].ReplicationTaskArn" \
+              --output text); do
+            st=$(aws dms describe-replication-tasks --filters "Name=replication-task-arn,Values=$arn" \
+                 --query 'ReplicationTasks[0].Status' --output text)
+            if [ "$st" = "running" ] || [ "$st" = "starting" ]; then
+              echo "stopping $arn"; aws dms stop-replication-task --replication-task-arn "$arn" || true
+            fi
+          done
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_BACKEND_BUCKET}" \
+            -backend-config="key=db-migrations/${ENVIRONMENT}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="dynamodb_table=${TF_BACKEND_TABLE}" \
+            -backend-config="encrypt=true"
+
+      - name: Disable RDS deletion protection
+        run: |
+          terraform apply -input=false -auto-approve \
+            -var-file="environments/${ENVIRONMENT}.tfvars" \
+            -var "rds_deletion_protection=false" \
+            -target=module.rds.aws_db_instance.this || true
+
+      - name: Terraform Destroy
+        run: |
+          terraform destroy -input=false -auto-approve \
+            -var-file="environments/${ENVIRONMENT}.tfvars"
+
+      - name: Sweep orphaned instances
+        run: |
+          orphans=$(aws ec2 describe-instances \
+            --filters "Name=tag:Project,Values=aws-db-migration" \
+                      "Name=tag:Environment,Values=${ENVIRONMENT}" \
+                      "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          if [ -n "$orphans" ]; then
+            echo "terminating orphans: $orphans"
+            aws ec2 terminate-instances --instance-ids $orphans || true
+          else
+            echo "no orphans"
+          fi
