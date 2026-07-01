@@ -115,11 +115,26 @@ profile), plus S3/DynamoDB access to the state backend.
 ### Existing DMS service roles
 
 `dms-vpc-role` and `dms-cloudwatch-logs-role` are fixed-name, account-level
-singletons. If your account already has them (from a prior DMS console use or an
-earlier apply), Terraform will fail with `EntityAlreadyExists`. Set
-`manage_dms_service_roles = false` so Terraform skips creating them — DMS only
-requires that they exist. `environments/dev.tfvars` ships with this set to
-`false`; flip it to `true` for a fresh account that has never used DMS.
+singletons DMS looks up globally. This project has **Terraform own them**
+(`manage_dms_service_roles = true`, the default and set in `environments/*`).
+
+Because they are account-wide, Terraform can only create them if they don't
+already exist. If the account already has them (from a prior DMS console use or
+a partial apply — often *misconfigured*, which shows up as
+`The IAM Role ... is not configured properly`), remove them **once** so
+Terraform can create clean, correctly-configured copies:
+
+```bash
+./docs/iam/delete-dms-service-roles.sh   # IAM-admin creds; deletes both roles
+```
+
+> Only run this on an account where no other DMS workload depends on those
+> shared roles.
+
+After that, every apply creates and reconciles them via Terraform — no manual
+steps. (If instead you must leave the roles account-managed, set
+`manage_dms_service_roles = false` and repair them in place with
+`./docs/iam/fix-dms-service-roles.sh`.)
 
 ## Quick start (local)
 
