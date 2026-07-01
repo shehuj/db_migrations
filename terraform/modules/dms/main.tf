@@ -17,10 +17,12 @@ resource "aws_dms_replication_subnet_group" "this" {
 }
 
 resource "aws_dms_replication_instance" "this" {
-  replication_instance_id     = "${var.name_prefix}-dms"
-  replication_instance_class  = var.replication_instance_class
-  allocated_storage           = var.allocated_storage
-  engine_version              = "3.5.2"
+  replication_instance_id    = "${var.name_prefix}-dms"
+  replication_instance_class = var.replication_instance_class
+  allocated_storage          = var.allocated_storage
+  # Empty -> omit so AWS uses the current default engine (versions vary by region
+  # and get deprecated; pinning a stale one fails with InvalidParameterValue).
+  engine_version              = var.engine_version != "" ? var.engine_version : null
   publicly_accessible         = false
   multi_az                    = false
   auto_minor_version_upgrade  = true
