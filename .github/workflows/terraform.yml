@@ -3,8 +3,8 @@ name: Deploy
 # End-to-end deployment pipeline:
 #   plan  -> apply (Terraform infra) -> configure (Ansible source DB)
 #
-# Auth uses GitHub OIDC -> AWS IAM role (no long-lived keys). Configure these
-# repository settings / secrets:
+# Auth uses GitHub OIDC -> AWS IAM role (no long-lived keys). Create these
+# repository secrets/variables yourself (Settings -> Secrets and variables):
 #   - vars.AWS_REGION            e.g. us-east-1 (optional; defaults to us-east-1)
 #   - secrets.AWS_ROLE_ARN       IAM role trusting this repo via OIDC
 #   - secrets.TF_BACKEND_BUCKET  S3 bucket for remote state
@@ -41,11 +41,18 @@ concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
+# All values come from repository secrets/variables. Surfaced here once so every
+# job inherits them; Terraform reads the TF_VAR_* names automatically.
 env:
   TF_VERSION: "1.9.5"
   ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
   # Falls back to us-east-1 when the repo variable AWS_REGION is not set.
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+  TF_BACKEND_BUCKET: ${{ secrets.TF_BACKEND_BUCKET }}
+  TF_BACKEND_TABLE: ${{ secrets.TF_BACKEND_TABLE }}
+  DMS_DB_PASSWORD: ${{ secrets.DMS_DB_PASSWORD }}
+  RDS_ADMIN_PASSWORD: ${{ secrets.RDS_ADMIN_PASSWORD }}
   # SOURCE_DB_ADMIN_PASSWORD is consumed by the Ansible step (not Terraform):
   # the source admin account is created by the mysql_source role.
   TF_VAR_dms_db_password: ${{ secrets.DMS_DB_PASSWORD }}
@@ -57,12 +64,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Verify required secrets are configured
-        env:
-          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
-          TF_BACKEND_BUCKET: ${{ secrets.TF_BACKEND_BUCKET }}
-          TF_BACKEND_TABLE: ${{ secrets.TF_BACKEND_TABLE }}
-          DMS_DB_PASSWORD: ${{ secrets.DMS_DB_PASSWORD }}
-          RDS_ADMIN_PASSWORD: ${{ secrets.RDS_ADMIN_PASSWORD }}
         run: |
           missing=()
           for name in AWS_ROLE_ARN TF_BACKEND_BUCKET TF_BACKEND_TABLE \
@@ -71,8 +72,8 @@ jobs:
           done
           if [ ${#missing[@]} -ne 0 ]; then
             echo "::error::Missing required repository secrets: ${missing[*]}"
-            echo "These are created by the one-time bootstrap stack in terraform/bootstrap/."
-            echo "See the 'First-time setup' section of the README for the exact commands."
+            echo "Add them under Settings -> Secrets and variables -> Actions."
+            echo "See the 'Required configuration' section of the README."
             exit 1
           fi
           echo "All required secrets are present."
@@ -92,7 +93,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: hashicorp/setup-terraform@v3
@@ -102,10 +103,10 @@ jobs:
       - name: Terraform Init
         run: |
           terraform init \
-            -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
+            -backend-config="bucket=${TF_BACKEND_BUCKET}" \
             -backend-config="key=db-migrations/${ENVIRONMENT}/terraform.tfstate" \
             -backend-config="region=${AWS_REGION}" \
-            -backend-config="dynamodb_table=${{ secrets.TF_BACKEND_TABLE }}" \
+            -backend-config="dynamodb_table=${TF_BACKEND_TABLE}" \
             -backend-config="encrypt=true"
 
       - name: Terraform Plan
@@ -136,7 +137,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: hashicorp/setup-terraform@v3
@@ -146,10 +147,10 @@ jobs:
       - name: Terraform Init
         run: |
           terraform init \
-            -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
+            -backend-config="bucket=${TF_BACKEND_BUCKET}" \
             -backend-config="key=db-migrations/${ENVIRONMENT}/terraform.tfstate" \
             -backend-config="region=${AWS_REGION}" \
-            -backend-config="dynamodb_table=${{ secrets.TF_BACKEND_TABLE }}" \
+            -backend-config="dynamodb_table=${TF_BACKEND_TABLE}" \
             -backend-config="encrypt=true"
 
       - name: Download plan artifact
@@ -180,7 +181,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: actions/setup-python@v5
