@@ -10,7 +10,7 @@ Provisioning is split by concern:
 | --- | --- | --- |
 | Infrastructure (VPC, EC2, RDS, DMS, IAM, monitoring) | Terraform (modular) | `terraform/` |
 | Source database configuration (install MySQL, enable binlog, seed data) | Ansible | `ansible/` |
-| CI/CD (validate → plan → apply → configure) | GitHub Actions (OIDC) | `.github/workflows/` |
+| CI/CD (preflight → plan → apply → configure) | GitHub Actions (OIDC) | `.github/workflows/` |
 | Helper scripts / seed SQL | Bash + SQL | `scripts/` |
 
 ## Architecture
@@ -51,16 +51,17 @@ full load, then streams ongoing changes from the MySQL binary log to RDS.
 │       └── monitoring/        # SNS topic + CloudWatch alarms
 ├── ansible/
 │   ├── site.yml               # entry playbook
-│   ├── ansible.cfg            # uses dynamic aws_ec2 inventory
-│   ├── inventory/aws_ec2.yml  # discovers host by Terraform tags
-│   ├── requirements.yml       # amazon.aws, community.mysql collections
+│   ├── ansible.cfg            # enable_plugins: host_list + aws_ec2
+│   ├── inventory/aws_ec2.yml  # dynamic inventory for local/manual runs
+│   ├── requirements.yml       # amazon.aws, ansible.mysql collections
 │   └── roles/mysql_source/    # install MySQL, enable ROW binlog, users, seed
 ├── scripts/
 │   ├── install_mysql.sh       # standalone fallback installer
 │   └── populate_db.sql        # sample schema + seed data
+├── docs/iam/                  # deploy-role DMS policy + service-role helper scripts
 ├── .github/workflows/
 │   ├── ci.yml                 # fmt/validate/tflint/ansible-lint on PRs
-│   └── terraform.yml          # plan → apply → ansible configure (OIDC)
+│   └── terraform.yml          # preflight → plan → apply → configure (OIDC)
 └── Makefile                   # local convenience targets
 ```
 
@@ -165,9 +166,14 @@ and re-apply) and watch the table statistics / CloudWatch alarms.
 - **`ci.yml`** runs on every PR: `terraform fmt`/`validate`, `tflint`, and
   `ansible-lint` + playbook syntax check. No cloud credentials needed.
 - **`terraform.yml`** runs on push to `main` (or manual dispatch):
-  `plan` → `apply` (gated by a GitHub Environment for required reviewers) →
-  `configure` (Ansible). Authentication uses **GitHub OIDC**, so no static AWS
-  keys are stored.
+  `preflight` (verifies required secrets exist) → `plan` → `apply` (gated by a
+  GitHub Environment for required reviewers) → `configure` (Ansible).
+  Authentication uses **GitHub OIDC**, so no static AWS keys are stored.
+
+The `configure` job writes `SSH_PRIVATE_KEY`, validates it with `ssh-keygen`,
+then runs the playbook against the **exact** instance from the Terraform apply
+output (`-i "<ip>,"`) rather than discovering hosts by tag — so an orphaned
+instance tagged `source-database` can never be targeted.
 
 Required repository configuration:
 
@@ -192,6 +198,26 @@ Required repository configuration:
   Ansible `--extra-vars`; `.gitignore` blocks state, tfvars, and keys.
 - **Reproducible state.** S3 backend is partial and supplied per-environment at
   `init` time, so the same code targets dev and prod.
+- **Deterministic Ansible targeting.** CI configures the single host from
+  `terraform output`, not whatever the dynamic inventory finds.
+- **Resilient DMS setup.** The engine version floats on the AWS regional default
+  (pinning a stale version fails), and a `time_sleep` after the IAM service roles
+  covers IAM propagation before DMS validates them.
+
+## Troubleshooting
+
+Issues hit while standing this up, and their fixes:
+
+| Symptom | Cause & fix |
+| --- | --- |
+| `preflight` fails listing missing secrets | Set them — see [Required configuration](#required-configuration). |
+| `AccessDeniedException` on `dms:*` | Attach `docs/iam/deploy-role-dms-policy.json` to the deploy role. |
+| `EntityAlreadyExists: dms-vpc-role` | The singleton roles exist. Run `docs/iam/delete-dms-service-roles.sh` once, then Terraform owns them. |
+| `The IAM Role ... is not configured properly` | A pre-existing role is misconfigured, or IAM hasn't propagated. Delete + let Terraform recreate (the `time_sleep` covers propagation), or `docs/iam/fix-dms-service-roles.sh`. |
+| `No replication engine found with version` | Leave `dms_engine_version = ""` so AWS picks the regional default. |
+| Ansible `error in libcrypto` / `Permission denied (publickey)` | `SSH_PRIVATE_KEY` is malformed/encrypted or doesn't match the instance key pair. Re-store an unencrypted PEM. |
+| Ansible sees two hosts / an unreachable IP | An orphaned instance is tagged `source-database`. CI targets the apply output, but terminate the orphan. |
+| Playbook assert fails on `mysql_source_app_password` | Set the `SOURCE_DB_ADMIN_PASSWORD` secret. |
 
 ## Cleanup
 
