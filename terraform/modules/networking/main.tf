@@ -137,17 +137,8 @@ resource "aws_security_group" "rds" {
 }
 
 # --- source_db rules ---------------------------------------------------------
-
-resource "aws_vpc_security_group_ingress_rule" "source_ssh" {
-  count = length(var.allowed_ssh_cidrs)
-
-  security_group_id = aws_security_group.source_db.id
-  description       = "SSH for administration / Ansible"
-  cidr_ipv4         = var.allowed_ssh_cidrs[count.index]
-  from_port         = 22
-  to_port           = 22
-  ip_protocol       = "tcp"
-}
+# No SSH ingress: the host is private and managed exclusively via SSM
+# (the SSM agent dials OUT to the endpoints, so no inbound rule is required).
 
 resource "aws_vpc_security_group_ingress_rule" "source_mysql_from_dms" {
   security_group_id            = aws_security_group.source_db.id
@@ -199,4 +190,51 @@ resource "aws_vpc_security_group_egress_rule" "dms_all" {
   description       = "Allow all outbound (reach source + target + AWS APIs)"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
+}
+
+###############################################################################
+# SSM interface endpoints
+#
+# Keep the Session Manager control channel entirely inside the VPC (no internet
+# path) so the private source host can be managed without SSH or a public IP.
+# NAT is still used for the host's package installs (apt), not for SSM.
+###############################################################################
+
+data "aws_region" "current" {}
+
+resource "aws_security_group" "ssm_endpoints" {
+  name        = "${var.name_prefix}-ssm-endpoints-sg"
+  description = "HTTPS to SSM interface endpoints from within the VPC"
+  vpc_id      = aws_vpc.this.id
+
+  tags = merge(var.tags, { Name = "${var.name_prefix}-ssm-endpoints-sg" })
+}
+
+resource "aws_vpc_security_group_ingress_rule" "ssm_https" {
+  security_group_id = aws_security_group.ssm_endpoints.id
+  description       = "HTTPS from within the VPC (SSM agent)"
+  cidr_ipv4         = var.vpc_cidr
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "ssm_all" {
+  security_group_id = aws_security_group.ssm_endpoints.id
+  description       = "Allow all outbound"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+resource "aws_vpc_endpoint" "ssm" {
+  for_each = toset(["ssm", "ssmmessages", "ec2messages"])
+
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.${each.key}"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.ssm_endpoints.id]
+  private_dns_enabled = true
+
+  tags = merge(var.tags, { Name = "${var.name_prefix}-${each.key}-endpoint" })
 }

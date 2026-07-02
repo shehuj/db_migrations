@@ -1,18 +1,8 @@
 name: Deploy
 
-# End-to-end deployment pipeline:
-#   plan  -> apply (Terraform infra) -> configure (Ansible source DB)
-#
-# Auth uses GitHub OIDC -> AWS IAM role (no long-lived keys). Create these
-# repository secrets/variables yourself (Settings -> Secrets and variables):
-#   - vars.AWS_REGION            e.g. us-east-1 (optional; defaults to us-east-1)
-#   - secrets.AWS_ROLE_ARN       IAM role trusting this repo via OIDC
-#   - secrets.TF_BACKEND_BUCKET  S3 bucket for remote state
-#   - secrets.TF_BACKEND_TABLE   DynamoDB table for state locking
-#   - secrets.SOURCE_DB_ADMIN_PASSWORD
-#   - secrets.DMS_DB_PASSWORD
-#   - secrets.RDS_ADMIN_PASSWORD
-#   - secrets.SSH_PRIVATE_KEY    PEM for the EC2 key pair (Ansible access)
+# Provisions the stack and configures the source DB so the target RDS is ready
+# for use. Access to the private source host is SSM-only (no SSH). This flow
+# does NOT run the migration — trigger that separately via the Migrate workflow.
 on:
   push:
     branches: [main]
@@ -20,7 +10,7 @@ on:
       - "terraform/**"
       - "ansible/**"
       - "scripts/**"
-      - ".github/workflows/terraform.yml"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
     inputs:
       environment:
@@ -29,32 +19,25 @@ on:
         options: [dev, prod]
         default: dev
       run_ansible:
-        description: "Run Ansible source-DB configuration after apply"
+        description: "Configure the source DB with Ansible after apply"
         type: boolean
         default: true
 
 permissions:
   contents: read
-  id-token: write # required for OIDC
+  id-token: write
 
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
-# All values come from repository secrets/variables. Surfaced here once so every
-# job inherits them; Terraform reads the TF_VAR_* names automatically.
 env:
   TF_VERSION: "1.9.5"
   ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
-  # Falls back to us-east-1 when the repo variable AWS_REGION is not set.
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
   TF_BACKEND_BUCKET: ${{ secrets.TF_BACKEND_BUCKET }}
   TF_BACKEND_TABLE: ${{ secrets.TF_BACKEND_TABLE }}
-  DMS_DB_PASSWORD: ${{ secrets.DMS_DB_PASSWORD }}
-  RDS_ADMIN_PASSWORD: ${{ secrets.RDS_ADMIN_PASSWORD }}
-  # SOURCE_DB_ADMIN_PASSWORD is consumed by the Ansible step (not Terraform):
-  # the source admin account is created by the mysql_source role.
   TF_VAR_dms_db_password: ${{ secrets.DMS_DB_PASSWORD }}
   TF_VAR_rds_admin_password: ${{ secrets.RDS_ADMIN_PASSWORD }}
 
@@ -62,18 +45,24 @@ jobs:
   preflight:
     name: Preflight (verify configuration)
     runs-on: ubuntu-latest
+    env:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      TF_BACKEND_BUCKET: ${{ secrets.TF_BACKEND_BUCKET }}
+      TF_BACKEND_TABLE: ${{ secrets.TF_BACKEND_TABLE }}
+      DMS_DB_PASSWORD: ${{ secrets.DMS_DB_PASSWORD }}
+      RDS_ADMIN_PASSWORD: ${{ secrets.RDS_ADMIN_PASSWORD }}
+      SOURCE_DB_ADMIN_PASSWORD: ${{ secrets.SOURCE_DB_ADMIN_PASSWORD }}
     steps:
       - name: Verify required secrets are configured
         run: |
           missing=()
           for name in AWS_ROLE_ARN TF_BACKEND_BUCKET TF_BACKEND_TABLE \
-                      DMS_DB_PASSWORD RDS_ADMIN_PASSWORD; do
+                      DMS_DB_PASSWORD RDS_ADMIN_PASSWORD SOURCE_DB_ADMIN_PASSWORD; do
             if [ -z "${!name}" ]; then missing+=("$name"); fi
           done
           if [ ${#missing[@]} -ne 0 ]; then
             echo "::error::Missing required repository secrets: ${missing[*]}"
             echo "Add them under Settings -> Secrets and variables -> Actions."
-            echo "See the 'Required configuration' section of the README."
             exit 1
           fi
           echo "All required secrets are present."
@@ -89,17 +78,14 @@ jobs:
       env: ${{ env.ENVIRONMENT }}
     steps:
       - uses: actions/checkout@v4
-
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
-
       - name: Terraform Init
         run: |
           terraform init \
@@ -108,12 +94,8 @@ jobs:
             -backend-config="region=${AWS_REGION}" \
             -backend-config="dynamodb_table=${TF_BACKEND_TABLE}" \
             -backend-config="encrypt=true"
-
       - name: Terraform Plan
-        run: |
-          terraform plan -input=false -out=tfplan \
-            -var-file="environments/${ENVIRONMENT}.tfvars"
-
+        run: terraform plan -input=false -out=tfplan -var-file="environments/${ENVIRONMENT}.tfvars"
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4
         with:
@@ -125,25 +107,23 @@ jobs:
     name: Terraform Apply
     needs: plan
     runs-on: ubuntu-latest
-    environment: ${{ needs.plan.outputs.env }} # enables required-reviewer gates
+    environment: ${{ needs.plan.outputs.env }}
     defaults:
       run:
         working-directory: terraform
     outputs:
-      source_public_ip: ${{ steps.tf_out.outputs.source_public_ip }}
+      instance_id: ${{ steps.tf_out.outputs.instance_id }}
+      ssm_bucket: ${{ steps.tf_out.outputs.ssm_bucket }}
     steps:
       - uses: actions/checkout@v4
-
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
-
       - name: Terraform Init
         run: |
           terraform init \
@@ -152,23 +132,21 @@ jobs:
             -backend-config="region=${AWS_REGION}" \
             -backend-config="dynamodb_table=${TF_BACKEND_TABLE}" \
             -backend-config="encrypt=true"
-
       - name: Download plan artifact
         uses: actions/download-artifact@v4
         with:
           name: tfplan-${{ env.ENVIRONMENT }}
           path: terraform
-
       - name: Terraform Apply
         run: terraform apply -input=false -auto-approve tfplan
-
       - name: Export outputs
         id: tf_out
         run: |
-          echo "source_public_ip=$(terraform output -raw source_ec2_public_ip)" >> "$GITHUB_OUTPUT"
+          echo "instance_id=$(terraform output -raw source_ec2_instance_id)" >> "$GITHUB_OUTPUT"
+          echo "ssm_bucket=$(terraform output -raw ssm_transfer_bucket)" >> "$GITHUB_OUTPUT"
 
   configure:
-    name: Ansible Configure Source DB
+    name: Ansible Configure Source DB (SSM)
     needs: apply
     if: ${{ github.event.inputs.run_ansible != 'false' }}
     runs-on: ubuntu-latest
@@ -177,61 +155,42 @@ jobs:
         working-directory: ansible
     steps:
       - uses: actions/checkout@v4
-
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install Ansible + collections
+      - name: Install Ansible + collections + SSM plugin
         run: |
           python -m pip install --upgrade pip
           pip install "ansible-core>=2.16" boto3 botocore
           ansible-galaxy collection install -r requirements.yml
-
-      - name: Load SSH key
+          curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o /tmp/smp.deb
+          sudo dpkg -i /tmp/smp.deb
+      - name: Wait for SSM agent to come online
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          # printf preserves the multi-line PEM and guarantees a trailing newline;
-          # writing from an env var (not an inline expression) avoids shell mangling.
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          # Fail fast with a clear message if the secret isn't a usable key.
-          if ! ssh-keygen -y -f ~/.ssh/id_rsa >/dev/null 2>&1; then
-            echo "::error::SSH_PRIVATE_KEY is not a valid, unencrypted private key."
-            echo "Store the PEM matching the instance key pair (no passphrase, OpenSSH/PEM format)."
-            exit 1
-          fi
-
-      - name: Wait for host SSH to come up
-        env:
-          SOURCE_IP: ${{ needs.apply.outputs.source_public_ip }}
+          INSTANCE_ID: ${{ needs.apply.outputs.instance_id }}
         run: |
           for i in $(seq 1 30); do
-            nc -z -w5 "$SOURCE_IP" 22 && exit 0
-            echo "waiting for SSH ($i)..."; sleep 10
+            ping=$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=${INSTANCE_ID}" \
+              --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || true)
+            [ "$ping" = "Online" ] && echo "SSM online" && exit 0
+            echo "waiting for SSM ($i)..."; sleep 10
           done
-          echo "host did not become reachable"; exit 1
-
-      - name: Run playbook
-        # Target ONLY the instance Terraform just created (from the apply output),
-        # not every tagged instance the dynamic inventory might find (e.g. orphans).
+          echo "::error::instance ${INSTANCE_ID} did not register with SSM"; exit 1
+      - name: Run playbook over SSM
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
-          SOURCE_IP: ${{ needs.apply.outputs.source_public_ip }}
+          SSM_TRANSFER_BUCKET: ${{ needs.apply.outputs.ssm_bucket }}
+          INSTANCE_ID: ${{ needs.apply.outputs.instance_id }}
           APP_PW: ${{ secrets.SOURCE_DB_ADMIN_PASSWORD }}
           DMS_PW: ${{ secrets.DMS_DB_PASSWORD }}
         run: |
           ansible-playbook site.yml \
-            -i "${SOURCE_IP}," \
-            -u ubuntu \
-            --private-key ~/.ssh/id_rsa \
+            -i "${INSTANCE_ID}," \
             --extra-vars "mysql_source_app_password=${APP_PW}" \
             --extra-vars "mysql_source_dms_password=${DMS_PW}"

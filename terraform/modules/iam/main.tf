@@ -121,6 +121,29 @@ resource "aws_iam_role_policy_attachment" "ec2_cloudwatch" {
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
+# Access to the S3 bucket Ansible's aws_ssm connection uses to stage file
+# transfers to this host (community.aws.aws_ssm puts objects the agent fetches).
+data "aws_iam_policy_document" "ec2_ssm_bucket" {
+  statement {
+    sid       = "SsmTransferBucketList"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
+    resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.ssm_transfer_bucket}"]
+  }
+  statement {
+    sid       = "SsmTransferBucketObjects"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.ssm_transfer_bucket}/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "ec2_ssm_bucket" {
+  name   = "${var.name_prefix}-ssm-transfer-bucket"
+  role   = aws_iam_role.ec2.id
+  policy = data.aws_iam_policy_document.ec2_ssm_bucket.json
+}
+
 resource "aws_iam_instance_profile" "ec2" {
   name = "${var.name_prefix}-source-ec2-profile"
   role = aws_iam_role.ec2.name

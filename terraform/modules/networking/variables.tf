@@ -23,11 +23,6 @@ variable "private_subnet_cidrs" {
   type        = list(string)
 }
 
-variable "allowed_ssh_cidrs" {
-  description = "CIDR blocks permitted to SSH to the source EC2 host."
-  type        = list(string)
-}
-
 variable "db_port" {
   description = "MySQL port used across security groups."
   type        = number

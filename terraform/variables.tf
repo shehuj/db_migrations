@@ -59,25 +59,19 @@ variable "availability_zones" {
 }
 
 variable "public_subnet_cidrs" {
-  description = "CIDR blocks for public subnets (one per AZ). Hosts the source EC2 MySQL host."
+  description = "CIDR blocks for public subnets (one per AZ). Only hosts the NAT gateway."
   type        = list(string)
   default     = ["10.20.1.0/24", "10.20.2.0/24"]
 }
 
 variable "private_subnet_cidrs" {
-  description = "CIDR blocks for private subnets (one per AZ). Hosts RDS and the DMS replication instance."
+  description = "CIDR blocks for private subnets (one per AZ). Hosts the source EC2, RDS, DMS, and the SSM endpoints."
   type        = list(string)
   default     = ["10.20.11.0/24", "10.20.12.0/24"]
 }
 
-variable "allowed_ssh_cidrs" {
-  description = "CIDR blocks permitted to SSH to the source EC2 host. Lock this down in production."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
-}
-
 ###############################################################################
-# Source EC2 (self-managed MySQL)
+# Source EC2 (self-managed MySQL) — private, SSM-only access
 ###############################################################################
 
 variable "ec2_instance_type" {
@@ -86,10 +80,10 @@ variable "ec2_instance_type" {
   default     = "t3.small"
 }
 
-variable "key_name" {
-  description = "Name of an existing EC2 key pair for SSH/Ansible access. Leave empty to disable SSH key auth."
+variable "ssm_transfer_bucket" {
+  description = "Existing S3 bucket used by Ansible's aws_ssm connection to transfer files to the host."
   type        = string
-  default     = ""
+  default     = "bathbucket31"
 }
 
 variable "ec2_root_volume_size" {

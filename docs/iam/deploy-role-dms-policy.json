@@ -28,6 +28,7 @@
         "dms:StartReplicationTask",
         "dms:StopReplicationTask",
         "dms:DescribeReplicationTasks",
+        "dms:DescribeTableStatistics",
         "dms:AddTagsToResource",
         "dms:RemoveTagsFromResource",
         "dms:ListTagsForResource"
