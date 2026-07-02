@@ -200,6 +200,45 @@ Required repository configuration:
 | Secret | `TF_BACKEND_BUCKET` / `TF_BACKEND_TABLE` | Remote state + lock |
 | Secret | `SOURCE_DB_ADMIN_PASSWORD` / `DMS_DB_PASSWORD` / `RDS_ADMIN_PASSWORD` | DB credentials |
 
+## Running a migration
+
+Deploy first (databases ready), then trigger data movement separately:
+
+1. **Actions → Deploy** (or push to `main`) → provisions infra and configures
+   the source DB over SSM. Wait for it to finish green.
+2. **Actions → Migrate → Run workflow** → pick `dev` or `prod`. It tests the DMS
+   endpoint connections, starts the replication task, and prints status + table
+   statistics. With `full-load-and-cdc`, the initial load runs and then ongoing
+   changes stream continuously.
+
+## Connecting to the databases
+
+Both databases are private — the source host has no public IP and RDS is not
+publicly accessible. Reach them with **SSM port forwarding** (no SSH, no
+bastion). Requires the AWS CLI + `session-manager-plugin` and an identity
+allowed to `ssm:StartSession` on the instance.
+
+```bash
+INSTANCE=$(terraform -chdir=terraform output -raw source_ec2_instance_id)
+
+# Source MySQL (runs on the private EC2 host) -> localhost:3307
+aws ssm start-session --target "$INSTANCE" \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["3306"],"localPortNumber":["3307"]}'
+#   then, in another shell:
+#   mysql -h 127.0.0.1 -P 3307 -u admin -p appdb        # SOURCE_DB_ADMIN_PASSWORD
+
+# Target RDS (forward through the same host to the RDS endpoint) -> localhost:3308
+RDS=$(terraform -chdir=terraform output -raw rds_address)
+aws ssm start-session --target "$INSTANCE" \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters "{\"host\":[\"$RDS\"],\"portNumber\":[\"3306\"],\"localPortNumber\":[\"3308\"]}"
+#   then, in another shell:
+#   mysql -h 127.0.0.1 -P 3308 -u admin -p appdb        # RDS_ADMIN_PASSWORD
+```
+
+For an interactive shell on the source host: `aws ssm start-session --target "$INSTANCE"`.
+
 ## Design notes
 
 - **SSM-only, no SSH.** The source host is private with no public IP and no key
