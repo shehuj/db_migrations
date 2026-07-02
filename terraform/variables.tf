@@ -9,7 +9,7 @@ variable "project" {
 }
 
 variable "environment" {
-  description = "Deployment environment (e.g. dev, staging, prod)."
+  description = "Deployment tier (e.g. dev, staging, prod). Each tier is a full source->target pipeline."
   type        = string
   default     = "dev"
 
@@ -59,45 +59,26 @@ variable "availability_zones" {
 }
 
 variable "public_subnet_cidrs" {
-  description = "CIDR blocks for public subnets (one per AZ). Only hosts the NAT gateway."
+  description = "CIDR blocks for public subnets (one per AZ). Host the NAT gateway and the public dev/source DB."
   type        = list(string)
   default     = ["10.20.1.0/24", "10.20.2.0/24"]
 }
 
 variable "private_subnet_cidrs" {
-  description = "CIDR blocks for private subnets (one per AZ). Hosts the source EC2, RDS, DMS, and the SSM endpoints."
+  description = "CIDR blocks for private subnets (one per AZ). Host the prod/target DB, DMS, bastion, and SSM endpoints."
   type        = list(string)
   default     = ["10.20.11.0/24", "10.20.12.0/24"]
 }
 
 ###############################################################################
-# Source EC2 (self-managed MySQL) — private, SSM-only access
-###############################################################################
-
-variable "ec2_instance_type" {
-  description = "Instance type for the source MySQL host."
-  type        = string
-  default     = "t3.small"
-}
-
-variable "ssm_transfer_bucket" {
-  description = "Existing S3 bucket used by Ansible's aws_ssm connection to transfer files to the host."
-  type        = string
-  default     = "bathbucket31"
-}
-
-variable "ec2_root_volume_size" {
-  description = "Root EBS volume size (GiB) for the source host."
-  type        = number
-  default     = 20
-}
-
-###############################################################################
-# Database credentials (source + target share schema/user for the demo)
+# Databases (both Amazon RDS for MySQL)
+#
+#   source = dev DB   : publicly reachable (SG-locked), where data is loaded
+#   target = prod DB  : private, reachable only by DMS + the SSM bastion
 ###############################################################################
 
 variable "db_name" {
-  description = "Application database/schema name to migrate."
+  description = "Application database/schema name."
   type        = string
   default     = "appdb"
 }
@@ -108,12 +89,74 @@ variable "db_port" {
   default     = 3306
 }
 
-# NOTE: the source MySQL *admin* user/password are not Terraform-managed — that
-# account is created by the Ansible mysql_source role. Terraform only needs the
-# dedicated DMS replication credentials below for the DMS source endpoint.
+variable "rds_engine_version" {
+  description = "RDS MySQL engine version (both databases)."
+  type        = string
+  default     = "8.0"
+}
+
+variable "rds_admin_user" {
+  description = "Master username for both RDS instances."
+  type        = string
+  default     = "admin"
+}
+
+variable "rds_admin_password" {
+  description = "Master password for both RDS instances. Provide via TF_VAR / CI secret."
+  type        = string
+  sensitive   = true
+}
+
+# --- source / dev DB ---------------------------------------------------------
+
+variable "dev_db_allowed_cidrs" {
+  description = "CIDR blocks permitted to reach the public dev/source DB (your office/home IPs). Empty = no public ingress."
+  type        = list(string)
+  default     = []
+}
+
+variable "source_db_instance_class" {
+  description = "Instance class for the dev/source DB."
+  type        = string
+  default     = "db.t3.small"
+}
+
+variable "source_db_allocated_storage" {
+  description = "Allocated storage (GiB) for the dev/source DB."
+  type        = number
+  default     = 20
+}
+
+# --- target / prod DB --------------------------------------------------------
+
+variable "target_db_instance_class" {
+  description = "Instance class for the prod/target DB."
+  type        = string
+  default     = "db.t3.small"
+}
+
+variable "target_db_allocated_storage" {
+  description = "Allocated storage (GiB) for the prod/target DB."
+  type        = number
+  default     = 20
+}
+
+variable "target_db_multi_az" {
+  description = "Multi-AZ for the prod/target DB."
+  type        = bool
+  default     = false
+}
+
+variable "target_db_deletion_protection" {
+  description = "Deletion protection for the prod/target DB."
+  type        = bool
+  default     = false
+}
+
+# --- DMS replication user (created on the source DB via scripts/setup_source_db.sql)
 
 variable "dms_db_user" {
-  description = "Dedicated MySQL user DMS uses to read the source (needs REPLICATION privileges)."
+  description = "MySQL user DMS uses to read the source DB (needs REPLICATION privileges)."
   type        = string
   default     = "dms_user"
 }
@@ -125,49 +168,19 @@ variable "dms_db_password" {
 }
 
 ###############################################################################
-# Target RDS
+# SSM bastion (jump host for reaching the private prod/target DB over SSM)
 ###############################################################################
 
-variable "rds_engine_version" {
-  description = "RDS MySQL engine version."
+variable "bastion_instance_type" {
+  description = "Instance type for the SSM bastion."
   type        = string
-  default     = "8.0"
+  default     = "t3.micro"
 }
 
-variable "rds_instance_class" {
-  description = "RDS instance class."
-  type        = string
-  default     = "db.t3.small"
-}
-
-variable "rds_allocated_storage" {
-  description = "RDS allocated storage in GiB."
+variable "bastion_root_volume_size" {
+  description = "Root volume size (GiB) for the bastion."
   type        = number
-  default     = 20
-}
-
-variable "rds_admin_user" {
-  description = "Master username for the target RDS instance."
-  type        = string
-  default     = "admin"
-}
-
-variable "rds_admin_password" {
-  description = "Master password for the target RDS instance. Provide via TF_VAR / CI secret."
-  type        = string
-  sensitive   = true
-}
-
-variable "rds_multi_az" {
-  description = "Whether the target RDS instance is Multi-AZ."
-  type        = bool
-  default     = false
-}
-
-variable "rds_deletion_protection" {
-  description = "Enable deletion protection on the target RDS instance."
-  type        = bool
-  default     = false
+  default     = 10
 }
 
 ###############################################################################
@@ -204,7 +217,7 @@ variable "dms_migration_type" {
 }
 
 variable "dms_start_task" {
-  description = "Whether Terraform should start the replication task on creation."
+  description = "Whether Terraform should start the replication task on creation (normally started via the Migrate flow)."
   type        = bool
   default     = false
 }

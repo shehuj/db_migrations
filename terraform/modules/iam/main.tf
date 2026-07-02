@@ -89,10 +89,10 @@ resource "aws_iam_role_policy_attachment" "dms_access_for_endpoint" {
 }
 
 ###############################################################################
-# EC2 instance profile (source host)
+# SSM bastion instance profile
 #
-# Grants SSM access so the host can be managed/inventoried without an open SSH
-# port, plus CloudWatch agent permissions for metrics/logs.
+# Grants SSM access so the private bastion can be reached without SSH, plus
+# CloudWatch agent permissions for metrics/logs.
 ###############################################################################
 
 data "aws_iam_policy_document" "ec2_assume" {
@@ -106,7 +106,7 @@ data "aws_iam_policy_document" "ec2_assume" {
 }
 
 resource "aws_iam_role" "ec2" {
-  name               = "${var.name_prefix}-source-ec2-role"
+  name               = "${var.name_prefix}-bastion-role"
   assume_role_policy = data.aws_iam_policy_document.ec2_assume.json
   tags               = var.tags
 }
@@ -121,31 +121,8 @@ resource "aws_iam_role_policy_attachment" "ec2_cloudwatch" {
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
-# Access to the S3 bucket Ansible's aws_ssm connection uses to stage file
-# transfers to this host (community.aws.aws_ssm puts objects the agent fetches).
-data "aws_iam_policy_document" "ec2_ssm_bucket" {
-  statement {
-    sid       = "SsmTransferBucketList"
-    effect    = "Allow"
-    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
-    resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.ssm_transfer_bucket}"]
-  }
-  statement {
-    sid       = "SsmTransferBucketObjects"
-    effect    = "Allow"
-    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-    resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.ssm_transfer_bucket}/*"]
-  }
-}
-
-resource "aws_iam_role_policy" "ec2_ssm_bucket" {
-  name   = "${var.name_prefix}-ssm-transfer-bucket"
-  role   = aws_iam_role.ec2.id
-  policy = data.aws_iam_policy_document.ec2_ssm_bucket.json
-}
-
 resource "aws_iam_instance_profile" "ec2" {
-  name = "${var.name_prefix}-source-ec2-profile"
+  name = "${var.name_prefix}-bastion-profile"
   role = aws_iam_role.ec2.name
   tags = var.tags
 }

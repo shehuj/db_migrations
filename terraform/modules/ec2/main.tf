@@ -1,9 +1,9 @@
 ###############################################################################
-# Source MySQL host
+# SSM bastion
 #
-# Terraform only provisions the instance and a *minimal* bootstrap (enough for
-# Ansible to take over: Python + SSM agent). All database configuration lives in
-# the Ansible role, keeping infra and configuration concerns separate.
+# A minimal, private jump host — the only way to reach the private target/prod
+# database, via SSM port forwarding. It runs no database; it just needs the SSM
+# agent and a MySQL client for admins. No SSH, no key pair, no public IP.
 ###############################################################################
 
 data "aws_ami" "ubuntu" {
@@ -21,13 +21,13 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-resource "aws_instance" "source" {
+resource "aws_instance" "bastion" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type               = var.instance_type
   subnet_id                   = var.subnet_id
   vpc_security_group_ids      = var.security_group_ids
   iam_instance_profile        = var.iam_instance_profile
-  associate_public_ip_address = false # private host, SSM-only access
+  associate_public_ip_address = false
 
   user_data = file("${path.module}/user_data.sh")
 
@@ -43,7 +43,7 @@ resource "aws_instance" "source" {
   }
 
   tags = merge(var.tags, {
-    Name = "${var.name_prefix}-source-mysql"
-    Role = "source-database"
+    Name = "${var.name_prefix}-bastion"
+    Role = "ssm-bastion"
   })
 }

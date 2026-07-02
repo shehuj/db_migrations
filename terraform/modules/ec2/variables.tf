@@ -4,7 +4,7 @@ variable "name_prefix" {
 }
 
 variable "subnet_id" {
-  description = "Private subnet to launch the source host into."
+  description = "Private subnet to launch the bastion into."
   type        = string
 }
 
@@ -26,7 +26,7 @@ variable "iam_instance_profile" {
 variable "root_volume_size" {
   description = "Root volume size in GiB."
   type        = number
-  default     = 20
+  default     = 10
 }
 
 variable "tags" {

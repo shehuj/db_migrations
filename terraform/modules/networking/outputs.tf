@@ -14,16 +14,21 @@ output "private_subnet_ids" {
 }
 
 output "source_db_security_group_id" {
-  description = "Security group ID for the source EC2 MySQL host."
+  description = "Security group ID for the dev/source RDS."
   value       = aws_security_group.source_db.id
 }
 
 output "rds_security_group_id" {
-  description = "Security group ID for the target RDS instance."
+  description = "Security group ID for the prod/target RDS."
   value       = aws_security_group.rds.id
 }
 
 output "dms_security_group_id" {
   description = "Security group ID for the DMS replication instance."
   value       = aws_security_group.dms.id
+}
+
+output "bastion_security_group_id" {
+  description = "Security group ID for the SSM bastion."
+  value       = aws_security_group.bastion.id
 }
