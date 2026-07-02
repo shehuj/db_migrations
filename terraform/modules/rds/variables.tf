@@ -3,14 +3,30 @@ variable "name_prefix" {
   type        = string
 }
 
+variable "role" {
+  description = "Logical role of this instance: source (dev) or target (prod). Used in names."
+  type        = string
+
+  validation {
+    condition     = contains(["source", "target"], var.role)
+    error_message = "role must be source or target."
+  }
+}
+
 variable "subnet_ids" {
-  description = "Private subnet IDs for the DB subnet group."
+  description = "Subnet IDs for the DB subnet group (public for source, private for target)."
   type        = list(string)
 }
 
 variable "vpc_security_group_ids" {
   description = "Security group IDs to attach to the instance."
   type        = list(string)
+}
+
+variable "publicly_accessible" {
+  description = "Whether the instance gets a public endpoint."
+  type        = bool
+  default     = false
 }
 
 variable "engine_version" {

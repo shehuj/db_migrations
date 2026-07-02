@@ -1,8 +1,0 @@
----
-mysql_source_database: appdb
-mysql_source_app_user: admin
-mysql_source_dms_user: dms_user
-mysql_source_server_id: 1
-mysql_source_bind_address: "0.0.0.0"
-mysql_source_binlog_retention_hours: 24
-mysql_source_seed_file: "{{ playbook_dir }}/../scripts/populate_db.sql"

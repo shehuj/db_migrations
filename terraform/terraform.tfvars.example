@@ -11,21 +11,26 @@ availability_zones   = ["us-east-1a", "us-east-1b"]
 public_subnet_cidrs  = ["10.20.1.0/24", "10.20.2.0/24"]
 private_subnet_cidrs = ["10.20.11.0/24", "10.20.12.0/24"]
 
-# Source EC2 — private, SSM-only (no key pair, no public IP)
-ec2_instance_type   = "t3.small"
-ssm_transfer_bucket = "bathbucket31" # existing bucket for Ansible aws_ssm transfer
-
 # Database
 db_name = "appdb"
 
-# --- Secrets: prefer TF_VAR_* env vars over this file -----------------------
-# dms_db_password    = "REQUIRED"  # DMS source replication user
-# rds_admin_password = "REQUIRED"  # target RDS master password
-# (The source MySQL admin password is set via Ansible, not Terraform.)
+# dev/source DB (public — lock to your IPs)
+dev_db_allowed_cidrs        = ["203.0.113.4/32"]
+source_db_instance_class    = "db.t3.small"
+source_db_allocated_storage = 20
 
-# Target RDS
-rds_instance_class    = "db.t3.small"
-rds_allocated_storage = 20
+# prod/target DB (private)
+target_db_instance_class      = "db.t3.small"
+target_db_allocated_storage   = 20
+target_db_multi_az            = false
+target_db_deletion_protection = false
+
+# Bastion (SSM jump host for the private prod DB)
+bastion_instance_type = "t3.micro"
+
+# --- Secrets: prefer TF_VAR_* env vars over this file -----------------------
+# rds_admin_password = "REQUIRED"  # master password for both RDS instances
+# dms_db_password    = "REQUIRED"  # DMS replication user on the source DB
 
 # DMS
 dms_replication_instance_class = "dms.t3.medium"

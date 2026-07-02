@@ -1,27 +1,21 @@
 name: Deploy
 
-# Provisions the stack and configures the source DB so the target RDS is ready
-# for use. Access to the private source host is SSM-only (no SSH). This flow
-# does NOT run the migration — trigger that separately via the Migrate workflow.
+# Provisions the pipeline: dev/source RDS (public), prod/target RDS (private),
+# SSM bastion, and DMS. It does NOT load data or run the migration — devs load
+# the dev DB (scripts/setup_source_db.sh), and the Migrate flow moves the data.
 on:
   push:
     branches: [main]
     paths:
       - "terraform/**"
-      - "ansible/**"
-      - "scripts/**"
       - ".github/workflows/deploy.yml"
   workflow_dispatch:
     inputs:
       environment:
-        description: "Target environment"
+        description: "Deployment tier"
         type: choice
         options: [dev, prod]
         default: dev
-      run_ansible:
-        description: "Configure the source DB with Ansible after apply"
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -38,8 +32,8 @@ env:
   AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
   TF_BACKEND_BUCKET: ${{ secrets.TF_BACKEND_BUCKET }}
   TF_BACKEND_TABLE: ${{ secrets.TF_BACKEND_TABLE }}
-  TF_VAR_dms_db_password: ${{ secrets.DMS_DB_PASSWORD }}
   TF_VAR_rds_admin_password: ${{ secrets.RDS_ADMIN_PASSWORD }}
+  TF_VAR_dms_db_password: ${{ secrets.DMS_DB_PASSWORD }}
 
 jobs:
   preflight:
@@ -51,18 +45,16 @@ jobs:
       TF_BACKEND_TABLE: ${{ secrets.TF_BACKEND_TABLE }}
       DMS_DB_PASSWORD: ${{ secrets.DMS_DB_PASSWORD }}
       RDS_ADMIN_PASSWORD: ${{ secrets.RDS_ADMIN_PASSWORD }}
-      SOURCE_DB_ADMIN_PASSWORD: ${{ secrets.SOURCE_DB_ADMIN_PASSWORD }}
     steps:
       - name: Verify required secrets are configured
         run: |
           missing=()
           for name in AWS_ROLE_ARN TF_BACKEND_BUCKET TF_BACKEND_TABLE \
-                      DMS_DB_PASSWORD RDS_ADMIN_PASSWORD SOURCE_DB_ADMIN_PASSWORD; do
+                      DMS_DB_PASSWORD RDS_ADMIN_PASSWORD; do
             if [ -z "${!name}" ]; then missing+=("$name"); fi
           done
           if [ ${#missing[@]} -ne 0 ]; then
             echo "::error::Missing required repository secrets: ${missing[*]}"
-            echo "Add them under Settings -> Secrets and variables -> Actions."
             exit 1
           fi
           echo "All required secrets are present."
@@ -111,9 +103,6 @@ jobs:
     defaults:
       run:
         working-directory: terraform
-    outputs:
-      instance_id: ${{ steps.tf_out.outputs.instance_id }}
-      ssm_bucket: ${{ steps.tf_out.outputs.ssm_bucket }}
     steps:
       - uses: actions/checkout@v4
       - name: Configure AWS credentials (OIDC)
@@ -139,58 +128,9 @@ jobs:
           path: terraform
       - name: Terraform Apply
         run: terraform apply -input=false -auto-approve tfplan
-      - name: Export outputs
-        id: tf_out
+      - name: Show connection outputs
         run: |
-          echo "instance_id=$(terraform output -raw source_ec2_instance_id)" >> "$GITHUB_OUTPUT"
-          echo "ssm_bucket=$(terraform output -raw ssm_transfer_bucket)" >> "$GITHUB_OUTPUT"
-
-  configure:
-    name: Ansible Configure Source DB (SSM)
-    needs: apply
-    if: ${{ github.event.inputs.run_ansible != 'false' }}
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ansible
-    steps:
-      - uses: actions/checkout@v4
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install Ansible + collections + SSM plugin
-        run: |
-          python -m pip install --upgrade pip
-          pip install "ansible-core>=2.16" boto3 botocore
-          ansible-galaxy collection install -r requirements.yml
-          curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o /tmp/smp.deb
-          sudo dpkg -i /tmp/smp.deb
-      - name: Wait for SSM agent to come online
-        env:
-          INSTANCE_ID: ${{ needs.apply.outputs.instance_id }}
-        run: |
-          for i in $(seq 1 30); do
-            ping=$(aws ssm describe-instance-information \
-              --filters "Key=InstanceIds,Values=${INSTANCE_ID}" \
-              --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || true)
-            [ "$ping" = "Online" ] && echo "SSM online" && exit 0
-            echo "waiting for SSM ($i)..."; sleep 10
-          done
-          echo "::error::instance ${INSTANCE_ID} did not register with SSM"; exit 1
-      - name: Run playbook over SSM
-        env:
-          ANSIBLE_HOST_KEY_CHECKING: "False"
-          SSM_TRANSFER_BUCKET: ${{ needs.apply.outputs.ssm_bucket }}
-          INSTANCE_ID: ${{ needs.apply.outputs.instance_id }}
-          APP_PW: ${{ secrets.SOURCE_DB_ADMIN_PASSWORD }}
-          DMS_PW: ${{ secrets.DMS_DB_PASSWORD }}
-        run: |
-          ansible-playbook site.yml \
-            -i "${INSTANCE_ID}," \
-            --extra-vars "mysql_source_app_password=${APP_PW}" \
-            --extra-vars "mysql_source_dms_password=${DMS_PW}"
+          echo "dev DB (public):  $(terraform output -raw dev_db_endpoint)"
+          echo "prod DB (private): $(terraform output -raw prod_db_address)"
+          echo "bastion:          $(terraform output -raw bastion_instance_id)"
+          echo "Next: run scripts/setup_source_db.sh, load data, then the Migrate workflow."

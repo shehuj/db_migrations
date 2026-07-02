@@ -107,9 +107,10 @@ resource "aws_route_table_association" "private" {
 ###############################################################################
 # Security groups
 #
-#   source_db : the EC2 MySQL host  (SSH + MySQL-from-DMS)
-#   rds       : the target database (MySQL-from-DMS)
-#   dms       : the replication instance (egress to source + target)
+#   source_db : dev DB (public, SG-locked)   — MySQL from dev CIDRs + DMS
+#   rds       : prod DB (private)            — MySQL from DMS + bastion
+#   dms       : the replication instance     — egress to both DBs
+#   bastion   : SSM jump host                — egress only
 ###############################################################################
 
 resource "aws_security_group" "dms" {
@@ -122,23 +123,40 @@ resource "aws_security_group" "dms" {
 
 resource "aws_security_group" "source_db" {
   name        = "${var.name_prefix}-source-db-sg"
-  description = "Source EC2 MySQL host"
+  description = "Dev/source RDS (public, SG-locked)"
   vpc_id      = aws_vpc.this.id
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-source-db-sg" })
 }
 
 resource "aws_security_group" "rds" {
-  name        = "${var.name_prefix}-rds-sg"
-  description = "Target RDS MySQL instance"
+  name        = "${var.name_prefix}-target-db-sg"
+  description = "Prod/target RDS (private)"
   vpc_id      = aws_vpc.this.id
 
-  tags = merge(var.tags, { Name = "${var.name_prefix}-rds-sg" })
+  tags = merge(var.tags, { Name = "${var.name_prefix}-target-db-sg" })
 }
 
-# --- source_db rules ---------------------------------------------------------
-# No SSH ingress: the host is private and managed exclusively via SSM
-# (the SSM agent dials OUT to the endpoints, so no inbound rule is required).
+resource "aws_security_group" "bastion" {
+  name        = "${var.name_prefix}-bastion-sg"
+  description = "SSM bastion (egress only)"
+  vpc_id      = aws_vpc.this.id
+
+  tags = merge(var.tags, { Name = "${var.name_prefix}-bastion-sg" })
+}
+
+# --- source_db (dev) rules ---------------------------------------------------
+
+resource "aws_vpc_security_group_ingress_rule" "source_mysql_from_devs" {
+  count = length(var.dev_db_allowed_cidrs)
+
+  security_group_id = aws_security_group.source_db.id
+  description       = "MySQL from allowed developer CIDRs"
+  cidr_ipv4         = var.dev_db_allowed_cidrs[count.index]
+  from_port         = var.db_port
+  to_port           = var.db_port
+  ip_protocol       = "tcp"
+}
 
 resource "aws_vpc_security_group_ingress_rule" "source_mysql_from_dms" {
   security_group_id            = aws_security_group.source_db.id
@@ -156,7 +174,7 @@ resource "aws_vpc_security_group_egress_rule" "source_all" {
   ip_protocol       = "-1"
 }
 
-# --- rds rules ---------------------------------------------------------------
+# --- rds (prod/target) rules -------------------------------------------------
 
 resource "aws_vpc_security_group_ingress_rule" "rds_mysql_from_dms" {
   security_group_id            = aws_security_group.rds.id
@@ -167,10 +185,10 @@ resource "aws_vpc_security_group_ingress_rule" "rds_mysql_from_dms" {
   ip_protocol                  = "tcp"
 }
 
-resource "aws_vpc_security_group_ingress_rule" "rds_mysql_from_source_host" {
+resource "aws_vpc_security_group_ingress_rule" "rds_mysql_from_bastion" {
   security_group_id            = aws_security_group.rds.id
-  description                  = "MySQL access from the source host (validation/queries)"
-  referenced_security_group_id = aws_security_group.source_db.id
+  description                  = "MySQL access from the SSM bastion (admin via port forward)"
+  referenced_security_group_id = aws_security_group.bastion.id
   from_port                    = var.db_port
   to_port                      = var.db_port
   ip_protocol                  = "tcp"
@@ -179,6 +197,15 @@ resource "aws_vpc_security_group_ingress_rule" "rds_mysql_from_source_host" {
 resource "aws_vpc_security_group_egress_rule" "rds_all" {
   security_group_id = aws_security_group.rds.id
   description       = "Allow all outbound"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+# --- bastion rules -----------------------------------------------------------
+
+resource "aws_vpc_security_group_egress_rule" "bastion_all" {
+  security_group_id = aws_security_group.bastion.id
+  description       = "Allow all outbound (SSM + reach the databases)"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
 }

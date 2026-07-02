@@ -28,6 +28,12 @@ variable "db_port" {
   type        = number
 }
 
+variable "dev_db_allowed_cidrs" {
+  description = "CIDR blocks allowed to reach the public dev/source DB."
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   description = "Tags applied to all resources."
   type        = map(string)
