@@ -4,7 +4,7 @@ variable "name_prefix" {
 }
 
 variable "subnet_id" {
-  description = "Public subnet to launch the source host into."
+  description = "Private subnet to launch the source host into."
   type        = string
 }
 
@@ -16,12 +16,6 @@ variable "security_group_ids" {
 variable "instance_type" {
   description = "EC2 instance type."
   type        = string
-}
-
-variable "key_name" {
-  description = "EC2 key pair name. Empty string disables SSH key association."
-  type        = string
-  default     = ""
 }
 
 variable "iam_instance_profile" {

@@ -3,14 +3,19 @@ output "vpc_id" {
   value       = module.networking.vpc_id
 }
 
-output "source_ec2_public_ip" {
-  description = "Public IP of the source MySQL host (used by Ansible)."
-  value       = module.ec2.public_ip
+output "source_ec2_instance_id" {
+  description = "Instance ID of the source MySQL host (used by Ansible over SSM)."
+  value       = module.ec2.instance_id
 }
 
 output "source_ec2_private_ip" {
   description = "Private IP of the source MySQL host (used by DMS source endpoint)."
   value       = module.ec2.private_ip
+}
+
+output "ssm_transfer_bucket" {
+  description = "S3 bucket Ansible's aws_ssm connection uses for file transfer."
+  value       = var.ssm_transfer_bucket
 }
 
 output "rds_endpoint" {

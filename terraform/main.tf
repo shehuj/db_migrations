@@ -18,7 +18,6 @@ module "networking" {
   availability_zones   = var.availability_zones
   public_subnet_cidrs  = var.public_subnet_cidrs
   private_subnet_cidrs = var.private_subnet_cidrs
-  allowed_ssh_cidrs    = var.allowed_ssh_cidrs
   db_port              = var.db_port
   tags                 = local.common_tags
 }
@@ -27,6 +26,7 @@ module "iam" {
   source = "./modules/iam"
 
   name_prefix              = local.name_prefix
+  ssm_transfer_bucket      = var.ssm_transfer_bucket
   manage_dms_service_roles = var.manage_dms_service_roles
   tags                     = local.common_tags
 }
@@ -35,10 +35,9 @@ module "ec2" {
   source = "./modules/ec2"
 
   name_prefix          = local.name_prefix
-  subnet_id            = module.networking.public_subnet_ids[0]
+  subnet_id            = module.networking.private_subnet_ids[0]
   security_group_ids   = [module.networking.source_db_security_group_id]
   instance_type        = var.ec2_instance_type
-  key_name             = var.key_name
   iam_instance_profile = module.iam.ec2_instance_profile_name
   root_volume_size     = var.ec2_root_volume_size
   tags                 = local.common_tags

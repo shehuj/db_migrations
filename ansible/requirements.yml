@@ -6,3 +6,6 @@ collections:
   # Canonical successor to community.mysql (ansible-namespace migration).
   - name: ansible.mysql
     version: ">=5.0.0"
+  # Provides the aws_ssm connection plugin (SSM-only, keyless host access).
+  - name: community.aws
+    version: ">=7.0.0"

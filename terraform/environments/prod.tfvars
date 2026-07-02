@@ -2,7 +2,8 @@ environment       = "prod"
 aws_region        = "us-east-1"
 ec2_instance_type = "t3.large"
 
-allowed_ssh_cidrs = [] # rely on SSM, no public SSH in prod
+# Source host is private + SSM-only; Ansible transfers files via this S3 bucket.
+ssm_transfer_bucket = "bathbucket31"
 
 # Set false if this account already has dms-vpc-role / dms-cloudwatch-logs-role.
 manage_dms_service_roles = true

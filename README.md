@@ -9,25 +9,29 @@ Provisioning is split by concern:
 | Concern | Tool | Location |
 | --- | --- | --- |
 | Infrastructure (VPC, EC2, RDS, DMS, IAM, monitoring) | Terraform (modular) | `terraform/` |
-| Source database configuration (install MySQL, enable binlog, seed data) | Ansible | `ansible/` |
-| CI/CD (preflight → plan → apply → configure) | GitHub Actions (OIDC) | `.github/workflows/` |
+| Source database configuration (install MySQL, enable binlog, seed data) | Ansible over **SSM** (keyless) | `ansible/` |
+| CI/CD — **deploy** (infra + config) and manual **migrate** | GitHub Actions (OIDC) | `.github/workflows/` |
 | Helper scripts / seed SQL | Bash + SQL | `scripts/` |
+
+The source host is **private and SSM-only** — no SSH, no key pair, no public IP.
+Deploying the stack and running the migration are **two separate flows**: deploy
+gets the databases ready; a manually-triggered migrate flow moves the data.
 
 ## Architecture
 
 ```text
                           VPC (10.20.0.0/16)
   ┌───────────────────────────────────────────────────────────────┐
-  │  Public subnets                Private subnets                 │
-  │  ┌───────────────┐             ┌───────────────┐               │
-  │  │  EC2 (source) │   binlog    │  DMS replic.  │   apply       │
-  │  │  MySQL 8.0    │◄────CDC─────│  instance     │──────────────►│ RDS MySQL
-  │  │  Ansible-cfg  │             │               │               │ (target)
-  │  └───────────────┘             └───────────────┘               │
-  │         ▲                              │                       │
-  └─────────┼──────────────────────────────┼──────────────────────┘
-            │ SSH/SSM (Ansible)             │ CloudWatch metrics
-        GitHub Actions                   SNS alarms (monitoring module)
+  │  Public subnets      Private subnets (source, RDS, DMS, SSM)   │
+  │  ┌─────────┐         ┌───────────────┐    ┌───────────────┐    │
+  │  │   NAT   │         │  EC2 (source) │    │  DMS replic.  │    │
+  │  │ gateway │◄──apt───│  MySQL 8.0    │    │  instance     │──► │ RDS MySQL
+  │  └─────────┘         │  Ansible-cfg  │◄CDC│               │    │ (target)
+  │                      └───────┬───────┘    └───────────────┘    │
+  │                   SSM endpoints (ssm/ssmmessages/ec2messages)  │
+  └──────────────────────────────┼────────────────────────────────┘
+                                 │ SSM (Ansible, no SSH/no public IP)
+                             GitHub Actions
 ```
 
 DMS reads the source via a least-privilege replication user, performs an initial
@@ -43,26 +47,28 @@ full load, then streams ongoing changes from the MySQL binary log to RDS.
 │   ├── backend.tf             # partial S3 backend (configured at init)
 │   ├── environments/          # dev.tfvars / prod.tfvars
 │   └── modules/
-│       ├── networking/        # VPC, subnets, NAT, route tables, security groups
-│       ├── iam/               # DMS service roles + EC2 instance profile
-│       ├── ec2/               # source MySQL host (minimal bootstrap only)
+│       ├── networking/        # VPC, subnets, NAT, SGs, SSM interface endpoints
+│       ├── iam/               # DMS service roles + EC2 instance profile (SSM + S3)
+│       ├── ec2/               # private source MySQL host (SSM-only)
 │       ├── rds/               # target RDS MySQL + subnet/parameter groups
 │       ├── dms/               # replication instance, endpoints, task
 │       └── monitoring/        # SNS topic + CloudWatch alarms
 ├── ansible/
 │   ├── site.yml               # entry playbook
 │   ├── ansible.cfg            # enable_plugins: host_list + aws_ec2
-│   ├── inventory/aws_ec2.yml  # dynamic inventory for local/manual runs
-│   ├── requirements.yml       # amazon.aws, ansible.mysql collections
+│   ├── group_vars/all.yml     # aws_ssm connection defaults (bucket, region)
+│   ├── inventory/aws_ec2.yml  # dynamic inventory (by instance id) for local runs
+│   ├── requirements.yml       # amazon.aws, ansible.mysql, community.aws
 │   └── roles/mysql_source/    # install MySQL, enable ROW binlog, users, seed
 ├── scripts/
 │   ├── install_mysql.sh       # standalone fallback installer
 │   ├── populate_db.sql        # sample schema + seed data
 │   └── teardown.sh            # complete per-env cleanup flow
-├── docs/iam/                  # deploy-role DMS policy + service-role helper scripts
+├── docs/iam/                  # deploy-role DMS + SSM policies, service-role helpers
 ├── .github/workflows/
 │   ├── ci.yml                 # fmt/validate/tflint/ansible-lint on PRs
-│   ├── terraform.yml          # preflight → plan → apply → configure (OIDC)
+│   ├── deploy.yml             # preflight → plan → apply → configure (SSM, OIDC)
+│   ├── migrate.yml            # manual DMS migration for dev/prod
 │   └── destroy.yml            # gated teardown (workflow_dispatch)
 └── Makefile                   # local convenience targets
 ```
@@ -74,15 +80,17 @@ You provide these once, out of band:
 - Terraform >= 1.5, Ansible (`ansible-core` >= 2.16)
 - An **S3 bucket + DynamoDB table** for remote state/locking
 - A **GitHub OIDC provider + IAM role** in your AWS account that trusts this repo
-  (the role needs permissions to manage VPC/EC2/RDS/DMS/IAM/CloudWatch/SNS)
-- An EC2 key pair if you want SSH/Ansible access
+  (the role needs to manage VPC/EC2/RDS/DMS/IAM/CloudWatch/SNS **and** drive SSM)
+- An **existing S3 bucket** for Ansible's SSM file transfer (default
+  `bathbucket31`, set via `ssm_transfer_bucket`) in the deployment region
 - The repository secrets/variables below
+
+No EC2 key pair is required — the source host is private and configured over SSM.
 
 ### Required configuration
 
 Set these under **Settings → Secrets and variables → Actions** (or with the
-`gh` CLI). The pipeline's `preflight` job fails fast and lists any that are
-missing.
+`gh` CLI). The `preflight` job fails fast and lists any that are missing.
 
 ```bash
 gh secret set AWS_ROLE_ARN           --body 'arn:aws:iam::<acct>:role/<deploy-role>'
@@ -91,29 +99,31 @@ gh secret set TF_BACKEND_TABLE       --body '<your-lock-table>'
 gh secret set DMS_DB_PASSWORD        --body '<strong-password>'
 gh secret set RDS_ADMIN_PASSWORD     --body '<strong-password>'
 gh secret set SOURCE_DB_ADMIN_PASSWORD --body '<strong-password>'   # used by Ansible
-gh secret set SSH_PRIVATE_KEY        < path/to/keypair.pem          # used by Ansible
 gh variable set AWS_REGION           --body 'us-east-1'             # optional (defaults to us-east-1)
 ```
+
+There is **no `SSH_PRIVATE_KEY`** anymore — access is SSM-only.
 
 ### Deploy-role permissions
 
 The IAM role in `AWS_ROLE_ARN` must be allowed to manage every service in the
-stack. DMS actions in particular are **not** covered by many baseline CI roles
-(and are excluded from `PowerUserAccess` only via IAM — DMS itself is included,
-but a hand-scoped role usually omits it). Attach the reference policy in
-[`docs/iam/deploy-role-dms-policy.json`](docs/iam/deploy-role-dms-policy.json)
-if you hit `AccessDeniedException` on `dms:*`:
+stack, plus drive Ansible over SSM. Beyond the usual
+VPC/EC2/RDS/CloudWatch/SNS/IAM and S3/DynamoDB (state) permissions, attach the
+two reference policies:
 
 ```bash
-aws iam put-role-policy \
-  --role-name <your-deploy-role> \
+# DMS management (start/stop task, endpoints, test-connection, table stats)
+aws iam put-role-policy --role-name <your-deploy-role> \
   --policy-name db-migration-dms \
   --policy-document file://docs/iam/deploy-role-dms-policy.json
+
+# SSM session + the transfer bucket (for the aws_ssm Ansible connection)
+aws iam put-role-policy --role-name <your-deploy-role> \
+  --policy-name db-migration-ssm \
+  --policy-document file://docs/iam/deploy-role-ssm-policy.json
 ```
 
-The role also needs the usual VPC/EC2/RDS/CloudWatch/SNS/IAM permissions (to
-create the `dms-vpc-role` / `dms-cloudwatch-logs-role` and the EC2 instance
-profile), plus S3/DynamoDB access to the state backend.
+(The EC2 instance role's access to the transfer bucket is created by Terraform.)
 
 ### Existing DMS service roles
 
@@ -155,27 +165,31 @@ make init
 make plan ENV=dev
 make apply ENV=dev
 
-# 4. Configure the source MySQL host with Ansible
+# 4. Configure the source MySQL host over SSM (needs session-manager-plugin
+#    installed locally, plus the community.aws collection)
 export DMS_DB_PASSWORD="$TF_VAR_dms_db_password"
-make configure
+export SSM_TRANSFER_BUCKET=bathbucket31
+make configure     # uses the dynamic inventory -> instance id -> aws_ssm
 ```
 
-Then start the migration from the DMS console (or set `dms_start_task = true`
-and re-apply) and watch the table statistics / CloudWatch alarms.
+The databases are now ready. To move data, run the **migration** flow (below) —
+it's intentionally separate from deploy.
 
 ## CI/CD
 
-- **`ci.yml`** runs on every PR: `terraform fmt`/`validate`, `tflint`, and
-  `ansible-lint` + playbook syntax check. No cloud credentials needed.
-- **`terraform.yml`** runs on push to `main` (or manual dispatch):
-  `preflight` (verifies required secrets exist) → `plan` → `apply` (gated by a
-  GitHub Environment for required reviewers) → `configure` (Ansible).
-  Authentication uses **GitHub OIDC**, so no static AWS keys are stored.
+Two OIDC-authenticated flows (no static AWS keys), plus PR checks:
 
-The `configure` job writes `SSH_PRIVATE_KEY`, validates it with `ssh-keygen`,
-then runs the playbook against the **exact** instance from the Terraform apply
-output (`-i "<ip>,"`) rather than discovering hosts by tag — so an orphaned
-instance tagged `source-database` can never be targeted.
+- **`ci.yml`** — every PR: `terraform fmt`/`validate`, `tflint`, `ansible-lint`,
+  and a playbook syntax check. No cloud credentials needed.
+- **`deploy.yml`** — push to `main` or manual dispatch: `preflight` (verifies
+  secrets) → `plan` → `apply` (GitHub-Environment gated) → `configure` (Ansible
+  **over SSM**). Gets the databases ready; does **not** migrate data. The
+  `configure` job installs the `session-manager-plugin`, waits for the instance
+  to register with SSM, then runs the playbook against the exact instance id
+  from the Terraform output (`-i "<instance-id>,"`).
+- **`migrate.yml`** — **manual only** (`workflow_dispatch`, pick `dev`/`prod`):
+  tests the DMS endpoint connections, starts the replication task, and reports
+  status + table statistics. Environment-gated for required reviewers.
 
 Required repository configuration:
 
@@ -185,22 +199,27 @@ Required repository configuration:
 | Secret | `AWS_ROLE_ARN` | IAM role assumed via OIDC |
 | Secret | `TF_BACKEND_BUCKET` / `TF_BACKEND_TABLE` | Remote state + lock |
 | Secret | `SOURCE_DB_ADMIN_PASSWORD` / `DMS_DB_PASSWORD` / `RDS_ADMIN_PASSWORD` | DB credentials |
-| Secret | `SSH_PRIVATE_KEY` | PEM for the EC2 key pair (Ansible step) |
 
 ## Design notes
 
+- **SSM-only, no SSH.** The source host is private with no public IP and no key
+  pair. Ansible connects via the `aws_ssm` plugin through interface endpoints;
+  there is no port 22 anywhere and no SSH key to manage or leak.
+- **Deploy vs migrate.** Deploying the stack and running the migration are
+  separate flows — data movement is a deliberate, manually-triggered action.
 - **Separation of concern.** Terraform never installs or configures MySQL —
-  the EC2 module does only a minimal bootstrap (Python + SSM) so Ansible can own
-  all database configuration idempotently.
+  the EC2 module does only a minimal bootstrap (Python + SSM agent) so Ansible
+  owns all database configuration idempotently.
 - **CDC readiness.** The Ansible role enables `binlog_format=ROW` /
-  `binlog_row_image=FULL` and asserts binary logging is on before finishing.
+  `binlog_row_image=FULL`, writes the drop-in as `zz-dms.cnf` so it wins over the
+  packaged `mysqld.cnf` bind-address, and asserts binary logging is on.
 - **Least privilege.** DMS connects with a dedicated user holding only
   `SELECT, RELOAD, REPLICATION CLIENT, REPLICATION SLAVE`.
 - **No secrets in code.** All passwords flow through `TF_VAR_*` / CI secrets /
   Ansible `--extra-vars`; `.gitignore` blocks state, tfvars, and keys.
 - **Reproducible state.** S3 backend is partial and supplied per-environment at
   `init` time, so the same code targets dev and prod.
-- **Deterministic Ansible targeting.** CI configures the single host from
+- **Deterministic Ansible targeting.** CI configures the single instance id from
   `terraform output`, not whatever the dynamic inventory finds.
 - **Resilient DMS setup.** The engine version floats on the AWS regional default
   (pinning a stale version fails), and a `time_sleep` after the IAM service roles
@@ -217,8 +236,9 @@ Issues hit while standing this up, and their fixes:
 | `EntityAlreadyExists: dms-vpc-role` | The singleton roles exist. Run `docs/iam/delete-dms-service-roles.sh` once, then Terraform owns them. |
 | `The IAM Role ... is not configured properly` | A pre-existing role is misconfigured, or IAM hasn't propagated. Delete + let Terraform recreate (the `time_sleep` covers propagation), or `docs/iam/fix-dms-service-roles.sh`. |
 | `No replication engine found with version` | Leave `dms_engine_version = ""` so AWS picks the regional default. |
-| Ansible `error in libcrypto` / `Permission denied (publickey)` | `SSH_PRIVATE_KEY` is malformed/encrypted or doesn't match the instance key pair. Re-store an unencrypted PEM. |
-| Ansible sees two hosts / an unreachable IP | An orphaned instance is tagged `source-database`. CI targets the apply output, but terminate the orphan. |
+| Ansible: instance not registered with SSM | The host needs egress to the SSM endpoints. Confirm the interface endpoints are up and the instance role has `AmazonSSMManagedInstanceCore`; the deploy job waits up to ~5 min. |
+| Ansible: `aws_ssm` connection / S3 access denied | The deploy role needs `docs/iam/deploy-role-ssm-policy.json`, and `ssm_transfer_bucket` must exist in the deployment region. |
+| DMS target: `Cannot create Exception table` | The RDS target user can't create tables in `appdb` — grant it, or drop leftover `awsdms_*` tables from a failed run. |
 | Playbook assert fails on `mysql_source_app_password` | Set the `SOURCE_DB_ADMIN_PASSWORD` secret. |
 
 ## Cleanup

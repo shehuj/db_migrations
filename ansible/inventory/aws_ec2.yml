@@ -1,6 +1,8 @@
 ---
-# Dynamic inventory: discovers the source host by the tags Terraform applies.
-# Requires AWS credentials in the environment (the CI role provides these).
+# Dynamic inventory for local/manual runs. Discovers the source host by the tags
+# Terraform applies and exposes it by instance ID (the aws_ssm connection plugin
+# targets the instance ID, and the host has no public IP). CI instead passes
+# `-i "<instance-id>,"` from the Terraform output.
 plugin: amazon.aws.aws_ec2
 
 regions:
@@ -11,11 +13,7 @@ filters:
   instance-state-name: running
 
 hostnames:
-  - ip-address      # public IP for SSH from CI
-  - private-ip-address
-
-compose:
-  ansible_host: public_ip_address
+  - instance-id
 
 keyed_groups:
   - key: ec2_tags.Project
