@@ -14,28 +14,22 @@ private_subnet_cidrs = ["10.20.11.0/24", "10.20.12.0/24"]
 # Database
 db_name = "appdb"
 
-# dev/source DB (public — lock to your IPs)
-dev_db_allowed_cidrs        = ["203.0.113.4/32"]
-source_db_instance_class    = "db.t3.small"
-source_db_allocated_storage = 20
+# dev DB (public — lock to your IPs)
+dev_db_allowed_cidrs     = ["203.0.113.4/32"]
+dev_db_instance_class    = "db.t3.small"
+dev_db_allocated_storage = 20
 
-# prod/target DB (private)
-target_db_instance_class      = "db.t3.small"
-target_db_allocated_storage   = 20
-target_db_multi_az            = false
-target_db_deletion_protection = false
+# prod DB (private, SSM-only)
+prod_db_instance_class      = "db.t3.small"
+prod_db_allocated_storage   = 20
+prod_db_multi_az            = false
+prod_db_deletion_protection = false
 
 # Bastion (SSM jump host for the private prod DB)
 bastion_instance_type = "t3.micro"
 
 # --- Secrets: prefer TF_VAR_* env vars over this file -----------------------
 # rds_admin_password = "REQUIRED"  # master password for both RDS instances
-# dms_db_password    = "REQUIRED"  # DMS replication user on the source DB
-
-# DMS
-dms_replication_instance_class = "dms.t3.medium"
-dms_migration_type             = "full-load-and-cdc"
-dms_start_task                 = false
 
 # Monitoring
 alarm_email = "" # e.g. you@example.com

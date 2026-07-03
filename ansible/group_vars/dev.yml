@@ -1,0 +1,6 @@
+---
+# Dev DB — public endpoint, connected to directly.
+# DEV_DB_HOST is exported from the Terraform output (see Makefile / README):
+#   export DEV_DB_HOST="$(terraform -chdir=terraform output -raw dev_db_address)"
+mysql_login_host: "{{ lookup('env', 'DEV_DB_HOST') }}"
+mysql_login_port: 3306

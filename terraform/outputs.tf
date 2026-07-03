@@ -4,28 +4,23 @@ output "vpc_id" {
 }
 
 output "dev_db_endpoint" {
-  description = "Connection endpoint of the dev/source DB (public — devs load data here)."
-  value       = module.rds_source.endpoint
+  description = "Connection endpoint of the dev DB (public — developers connect here directly)."
+  value       = module.rds_dev.endpoint
 }
 
 output "dev_db_address" {
-  description = "Hostname of the dev/source DB."
-  value       = module.rds_source.address
+  description = "Hostname of the dev DB."
+  value       = module.rds_dev.address
 }
 
 output "prod_db_address" {
-  description = "Hostname of the prod/target DB (private — reach via the SSM bastion)."
-  value       = module.rds_target.address
+  description = "Hostname of the prod DB (private — reach via the SSM bastion)."
+  value       = module.rds_prod.address
 }
 
 output "bastion_instance_id" {
   description = "SSM bastion instance ID (target for `aws ssm start-session`)."
   value       = module.ec2.instance_id
-}
-
-output "dms_replication_task_arn" {
-  description = "ARN of the DMS replication task (dev -> prod)."
-  value       = module.dms.replication_task_arn
 }
 
 output "sns_alarm_topic_arn" {

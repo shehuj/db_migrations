@@ -1,7 +1,7 @@
 ###############################################################################
 # SSM bastion
 #
-# A minimal, private jump host — the only way to reach the private target/prod
+# A minimal, private jump host — the only way to reach the private prod
 # database, via SSM port forwarding. It runs no database; it just needs the SSM
 # agent and a MySQL client for admins. No SSH, no key pair, no public IP.
 ###############################################################################

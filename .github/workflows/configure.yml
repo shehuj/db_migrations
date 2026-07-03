@@ -1,0 +1,110 @@
+name: Configure
+
+# Manually triggered database configuration. Runs the Ansible role that creates
+# the schema, the application user, and seeds sample data. Deploy (infra) must
+# already be done.
+#
+#   prod : reached through an SSM port-forward opened on the runner — always
+#          works via the bastion (OIDC + ssm:StartSession).
+#   dev  : reached directly over the public endpoint — only works if the runner's
+#          egress IP is in dev_db_allowed_cidrs. Developers usually configure dev
+#          locally with `make configure-dev` instead.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Which database to configure"
+        type: choice
+        options: [prod, dev]
+        default: prod
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: configure-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.9.5"
+  ENVIRONMENT: ${{ github.event.inputs.environment }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+  TF_BACKEND_BUCKET: ${{ secrets.TF_BACKEND_BUCKET }}
+  TF_BACKEND_TABLE: ${{ secrets.TF_BACKEND_TABLE }}
+  RDS_ADMIN_PASSWORD: ${{ secrets.RDS_ADMIN_PASSWORD }}
+  APP_DB_PASSWORD: ${{ secrets.APP_DB_PASSWORD }}
+  PROD_TUNNEL_PORT: "3308"
+
+jobs:
+  configure:
+    name: Configure ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }} # required-reviewer gate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init + resolve outputs
+        id: tf
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_BACKEND_BUCKET}" \
+            -backend-config="key=db-migrations/${ENVIRONMENT}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="dynamodb_table=${TF_BACKEND_TABLE}" \
+            -backend-config="encrypt=true"
+          echo "dev_db=$(terraform output -raw dev_db_address)"      >> "$GITHUB_OUTPUT"
+          echo "prod_db=$(terraform output -raw prod_db_address)"    >> "$GITHUB_OUTPUT"
+          echo "bastion=$(terraform output -raw bastion_instance_id)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Ansible + MySQL deps
+        run: |
+          python3 -m pip install --quiet ansible-core PyMySQL
+          ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Install session-manager-plugin (prod only)
+        if: env.ENVIRONMENT == 'prod'
+        run: |
+          curl -sSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o smp.deb
+          sudo dpkg -i smp.deb
+
+      - name: Configure dev DB (direct)
+        if: env.ENVIRONMENT == 'dev'
+        working-directory: ansible
+        env:
+          DEV_DB_HOST: ${{ steps.tf.outputs.dev_db }}
+        run: ansible-playbook configure.yml --limit dev
+
+      - name: Configure prod DB (via SSM tunnel)
+        if: env.ENVIRONMENT == 'prod'
+        working-directory: ansible
+        env:
+          BASTION: ${{ steps.tf.outputs.bastion }}
+          PROD_DB: ${{ steps.tf.outputs.prod_db }}
+        run: |
+          # Open the port-forward in the background, wait for it to accept, then
+          # run Ansible against localhost:${PROD_TUNNEL_PORT}.
+          aws ssm start-session --target "$BASTION" \
+            --document-name AWS-StartPortForwardingSessionToRemoteHost \
+            --parameters "{\"host\":[\"${PROD_DB}\"],\"portNumber\":[\"3306\"],\"localPortNumber\":[\"${PROD_TUNNEL_PORT}\"]}" &
+          SSM_PID=$!
+          trap 'kill $SSM_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if (echo > "/dev/tcp/127.0.0.1/${PROD_TUNNEL_PORT}") 2>/dev/null; then
+              echo "tunnel up after ${i}s"; break
+            fi
+            sleep 1
+          done
+          ansible-playbook configure.yml --limit prod

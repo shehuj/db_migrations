@@ -1,0 +1,15 @@
+# The role consumes connection/config variables supplied by group_vars (shared
+# across the dev and prod tiers), so role-name-prefixed variable names would be
+# misleading. Everything else runs at the default production profile.
+skip_list:
+  - var-naming[no-role-prefix]
+  # `community.mysql` is the name we install (requirements.yml) and it works on
+  # every ansible-core (native on older, redirected to `ansible.mysql` on newer).
+  # Newer cores flag it as non-canonical, so the "canonical" preference is a
+  # moving target across versions — keep the installable, portable name.
+  - fqcn[canonical]
+
+# Installed Galaxy collections (community.mysql) land here in CI; they are
+# third-party vendored code and must not be linted as if they were ours.
+exclude_paths:
+  - collections/

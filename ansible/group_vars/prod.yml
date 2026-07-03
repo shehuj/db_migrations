@@ -1,0 +1,7 @@
+---
+# Prod DB — private, no public endpoint. Reached only through the SSM
+# port-forward tunnel, which maps a local port to the prod RDS host:3306.
+# Open the tunnel first (scripts/prod_tunnel.sh or the README command), then
+# Ansible connects to it on localhost.
+mysql_login_host: 127.0.0.1
+mysql_login_port: "{{ lookup('env', 'PROD_TUNNEL_PORT') | default('3308', true) }}"
