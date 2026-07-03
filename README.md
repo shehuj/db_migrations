@@ -71,7 +71,8 @@ developer-facing **dev** database and a locked-down **prod** database — with
 
 You provide these once, out of band:
 
-- Terraform >= 1.5, Ansible (`ansible-core`), and the `PyMySQL` driver
+- Terraform >= 1.5 and Python 3 (`make ansible-deps` builds a local Ansible
+  virtualenv with `ansible-core` + `PyMySQL` — no system pip installs)
 - The AWS CLI + `session-manager-plugin` (to reach the prod DB)
 - An **S3 bucket + DynamoDB table** for remote state/locking
 - A **GitHub OIDC provider + IAM role** that trusts this repo (manages
@@ -125,14 +126,20 @@ instances and the bastion — it does **not** configure or seed the databases.
 Your IP must be in `dev_db_allowed_cidrs`. Then:
 
 ```bash
-make ansible-deps                 # community.mysql collection + PyMySQL (once)
+make ansible-deps                 # build the Ansible venv + collection (once)
 export RDS_ADMIN_PASSWORD='...'    # master password
 export APP_DB_PASSWORD='...'       # optional; password for the app user
 make configure-dev                 # schema + app user + seed data
 ```
 
 `make configure-dev` pulls the dev endpoint from the Terraform output and runs
-`ansible-playbook configure.yml --limit dev`.
+the playbook via the venv. If your Terraform state isn't initialized in this
+shell, pass the host explicitly instead:
+
+```bash
+export DEV_DB_HOST="aws-db-migration-dev-dev.<...>.rds.amazonaws.com"
+make configure-dev                 # uses DEV_DB_HOST, skips terraform output
+```
 
 ### 3. Configure + seed the prod DB (private, via SSM)
 

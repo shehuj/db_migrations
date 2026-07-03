@@ -6,6 +6,12 @@ TF_DIR      ?= terraform
 ANSIBLE_DIR ?= ansible
 ENV         ?= dev
 
+# Self-contained Ansible virtualenv (Homebrew's system Python is PEP-668 locked,
+# so we never pip-install into it). configure-* prefer the venv's ansible-playbook
+# and fall back to one on PATH if the venv hasn't been created yet.
+VENV             := $(ANSIBLE_DIR)/.venv
+ANSIBLE_PLAYBOOK := $(if $(wildcard $(VENV)/bin/ansible-playbook),$(abspath $(VENV))/bin/ansible-playbook,ansible-playbook)
+
 .PHONY: help fmt validate lint init plan apply destroy teardown \
         ansible-deps configure-dev prod-tunnel configure-prod clean
 
@@ -41,19 +47,20 @@ teardown: ## Full cleanup for ENV: clear protection, destroy, sweep orphans
 
 ## --- Ansible (configure + seed the databases) -------------------------------
 
-ansible-deps: ## Install the community.mysql collection + PyMySQL driver
-	cd $(ANSIBLE_DIR) && ansible-galaxy collection install -r requirements.yml
-	python3 -m pip install --quiet PyMySQL
+ansible-deps: ## Create the Ansible venv (ansible-core + PyMySQL) + install the collection
+	python3 -m venv $(VENV)
+	$(abspath $(VENV))/bin/pip install --quiet --upgrade pip ansible-core PyMySQL
+	cd $(ANSIBLE_DIR) && $(abspath $(VENV))/bin/ansible-galaxy collection install -r requirements.yml
 
-configure-dev: ## Configure + seed the dev DB (public; needs RDS_ADMIN_PASSWORD)
-	cd $(ANSIBLE_DIR) && DEV_DB_HOST="$$(cd ../$(TF_DIR) && terraform output -raw dev_db_address)" \
-		ansible-playbook configure.yml --limit dev
+configure-dev: ## Configure + seed the dev DB (public; needs RDS_ADMIN_PASSWORD). Override host with DEV_DB_HOST=...
+	cd $(ANSIBLE_DIR) && DEV_DB_HOST="$${DEV_DB_HOST:-$$(cd ../$(TF_DIR) && terraform output -raw dev_db_address)}" \
+		$(ANSIBLE_PLAYBOOK) configure.yml --limit dev
 
 prod-tunnel: ## Open the SSM port-forward to the prod DB (leave running)
 	./scripts/prod_tunnel.sh
 
 configure-prod: ## Configure + seed the prod DB (needs prod-tunnel open + RDS_ADMIN_PASSWORD)
-	cd $(ANSIBLE_DIR) && ansible-playbook configure.yml --limit prod
+	cd $(ANSIBLE_DIR) && $(ANSIBLE_PLAYBOOK) configure.yml --limit prod
 
 clean: ## Remove local terraform plan artifacts
 	find $(TF_DIR) -name tfplan -delete
