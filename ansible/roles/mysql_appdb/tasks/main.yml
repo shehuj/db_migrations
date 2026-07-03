@@ -33,24 +33,24 @@
     login_user: "{{ mysql_login_user }}"
     login_password: "{{ mysql_login_password }}"
 
+# mysql_query runs through PyMySQL (not the mysql CLI), so it works with the
+# ansible-core-only venv and is unaffected by the client's auth-plugin support.
 - name: Load the application schema
-  community.mysql.mysql_db:
-    name: "{{ db_name }}"
-    state: import
-    target: "{{ role_path }}/files/schema.sql"
+  community.mysql.mysql_query:
     login_host: "{{ mysql_login_host }}"
     login_port: "{{ mysql_login_port }}"
     login_user: "{{ mysql_login_user }}"
     login_password: "{{ mysql_login_password }}"
+    login_db: "{{ db_name }}"
+    query: "{{ appdb_schema_statements }}"
   when: load_schema | bool
 
 - name: Load the sample seed data
-  community.mysql.mysql_db:
-    name: "{{ db_name }}"
-    state: import
-    target: "{{ role_path }}/files/seed.sql"
+  community.mysql.mysql_query:
     login_host: "{{ mysql_login_host }}"
     login_port: "{{ mysql_login_port }}"
     login_user: "{{ mysql_login_user }}"
     login_password: "{{ mysql_login_password }}"
+    login_db: "{{ db_name }}"
+    query: "{{ appdb_seed_statements }}"
   when: load_seed_data | bool
