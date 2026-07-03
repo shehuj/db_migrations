@@ -1,0 +1,19 @@
+---
+# Shared configuration for both database tiers.
+#
+# Secrets come from the environment, never from tracked files:
+#   RDS_ADMIN_PASSWORD  master password for the RDS instances (login user)
+#   APP_DB_PASSWORD     password to set for the application user
+db_name: appdb
+
+# Master/login credentials (Terraform's rds_admin_user / rds_admin_password).
+mysql_login_user: admin
+mysql_login_password: "{{ lookup('env', 'RDS_ADMIN_PASSWORD') }}"
+
+# Least-privilege application user Ansible creates in each database.
+app_db_user: appuser
+app_db_password: "{{ lookup('env', 'APP_DB_PASSWORD') | default('change-me-app-pw', true) }}"
+
+# Load the sample schema + seed rows. Override per tier if desired.
+load_schema: true
+load_seed_data: true

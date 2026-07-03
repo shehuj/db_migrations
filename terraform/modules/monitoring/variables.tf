@@ -10,12 +10,12 @@ variable "alarm_email" {
 }
 
 variable "ec2_instance_id" {
-  description = "Source EC2 instance ID to monitor."
+  description = "SSM bastion instance ID to monitor."
   type        = string
 }
 
 variable "rds_instance_id" {
-  description = "Target RDS instance identifier to monitor."
+  description = "Prod RDS instance identifier to monitor."
   type        = string
 }
 

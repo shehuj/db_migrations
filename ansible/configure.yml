@@ -1,0 +1,16 @@
+---
+# Configure and seed the application databases.
+#
+#   Dev  (public):   export DEV_DB_HOST + RDS_ADMIN_PASSWORD, then:
+#                    ansible-playbook configure.yml --limit dev
+#
+#   Prod (private):  open the SSM tunnel (scripts/prod_tunnel.sh), export
+#                    RDS_ADMIN_PASSWORD, then:
+#                    ansible-playbook configure.yml --limit prod
+#
+# Always pass --limit; running against 'all' would try both tiers at once.
+- name: Configure MySQL application database
+  hosts: all
+  gather_facts: false
+  roles:
+    - mysql_appdb

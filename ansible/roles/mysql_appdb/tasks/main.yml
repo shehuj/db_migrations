@@ -1,0 +1,56 @@
+---
+# Configure and seed a MySQL database. Connection parameters (login_host/port)
+# are supplied by group_vars per tier: dev connects to the public endpoint,
+# prod connects to the local end of the SSM port-forward tunnel.
+
+- name: Assert connection + credentials are provided
+  ansible.builtin.assert:
+    that:
+      - mysql_login_host | length > 0
+      - mysql_login_password | length > 0
+    fail_msg: >-
+      mysql_login_host and RDS_ADMIN_PASSWORD must be set. For dev export
+      DEV_DB_HOST from the Terraform output; for prod open the SSM tunnel first.
+
+- name: Ensure the application database exists
+  community.mysql.mysql_db:
+    name: "{{ db_name }}"
+    state: present
+    login_host: "{{ mysql_login_host }}"
+    login_port: "{{ mysql_login_port }}"
+    login_user: "{{ mysql_login_user }}"
+    login_password: "{{ mysql_login_password }}"
+
+- name: Create the least-privilege application user
+  community.mysql.mysql_user:
+    name: "{{ app_db_user }}"
+    password: "{{ app_db_password }}"
+    host: "%"
+    priv: "{{ db_name }}.*:SELECT,INSERT,UPDATE,DELETE"
+    state: present
+    login_host: "{{ mysql_login_host }}"
+    login_port: "{{ mysql_login_port }}"
+    login_user: "{{ mysql_login_user }}"
+    login_password: "{{ mysql_login_password }}"
+
+- name: Load the application schema
+  community.mysql.mysql_db:
+    name: "{{ db_name }}"
+    state: import
+    target: "{{ role_path }}/files/schema.sql"
+    login_host: "{{ mysql_login_host }}"
+    login_port: "{{ mysql_login_port }}"
+    login_user: "{{ mysql_login_user }}"
+    login_password: "{{ mysql_login_password }}"
+  when: load_schema | bool
+
+- name: Load the sample seed data
+  community.mysql.mysql_db:
+    name: "{{ db_name }}"
+    state: import
+    target: "{{ role_path }}/files/seed.sql"
+    login_host: "{{ mysql_login_host }}"
+    login_port: "{{ mysql_login_port }}"
+    login_user: "{{ mysql_login_user }}"
+    login_password: "{{ mysql_login_password }}"
+  when: load_seed_data | bool

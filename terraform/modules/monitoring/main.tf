@@ -1,5 +1,5 @@
 ###############################################################################
-# Monitoring: SNS topic + CloudWatch alarms covering the migration path
+# Monitoring: SNS topic + CloudWatch alarms for the bastion and the prod DB
 ###############################################################################
 
 resource "aws_sns_topic" "alarms" {
@@ -15,11 +15,11 @@ resource "aws_sns_topic_subscription" "email" {
   endpoint  = var.alarm_email
 }
 
-# --- Source EC2 host ---------------------------------------------------------
+# --- SSM bastion host --------------------------------------------------------
 
 resource "aws_cloudwatch_metric_alarm" "ec2_cpu" {
-  alarm_name          = "${var.name_prefix}-source-cpu-high"
-  alarm_description   = "Source MySQL host CPU > 80% for 10 minutes."
+  alarm_name          = "${var.name_prefix}-bastion-cpu-high"
+  alarm_description   = "Bastion host CPU > 80% for 10 minutes."
   namespace           = "AWS/EC2"
   metric_name         = "CPUUtilization"
   statistic           = "Average"
@@ -33,11 +33,11 @@ resource "aws_cloudwatch_metric_alarm" "ec2_cpu" {
   tags                = var.tags
 }
 
-# --- Target RDS --------------------------------------------------------------
+# --- Prod RDS ----------------------------------------------------------------
 
 resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
-  alarm_name          = "${var.name_prefix}-target-cpu-high"
-  alarm_description   = "Target RDS CPU > 80% for 10 minutes."
+  alarm_name          = "${var.name_prefix}-prod-cpu-high"
+  alarm_description   = "Prod RDS CPU > 80% for 10 minutes."
   namespace           = "AWS/RDS"
   metric_name         = "CPUUtilization"
   statistic           = "Average"
@@ -52,8 +52,8 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_free_storage" {
-  alarm_name          = "${var.name_prefix}-target-storage-low"
-  alarm_description   = "Target RDS free storage below 2 GiB."
+  alarm_name          = "${var.name_prefix}-prod-storage-low"
+  alarm_description   = "Prod RDS free storage below 2 GiB."
   namespace           = "AWS/RDS"
   metric_name         = "FreeStorageSpace"
   statistic           = "Average"
@@ -62,23 +62,6 @@ resource "aws_cloudwatch_metric_alarm" "rds_free_storage" {
   threshold           = 2147483648 # 2 GiB in bytes
   comparison_operator = "LessThanThreshold"
   dimensions          = { DBInstanceIdentifier = var.rds_instance_id }
-  alarm_actions       = [aws_sns_topic.alarms.arn]
-  tags                = var.tags
-}
-
-# --- DMS task latency --------------------------------------------------------
-
-resource "aws_cloudwatch_metric_alarm" "dms_cdc_latency" {
-  alarm_name          = "${var.name_prefix}-dms-cdc-latency-high"
-  alarm_description   = "DMS CDC target latency above 60 seconds."
-  namespace           = "AWS/DMS"
-  metric_name         = "CDCLatencyTarget"
-  statistic           = "Average"
-  period              = 300
-  evaluation_periods  = 2
-  threshold           = 60
-  comparison_operator = "GreaterThanThreshold"
-  treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.alarms.arn]
   tags                = var.tags
 }

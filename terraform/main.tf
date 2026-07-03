@@ -1,14 +1,16 @@
 ###############################################################################
 # Root composition
 #
-# One source->target pipeline:
+# Two independent Amazon RDS for MySQL databases + an SSM bastion:
 #
-#   networking ─┬─> rds.source  (dev DB, public, SG-locked)
-#               ├─> rds.target  (prod DB, private)
-#               ├─> ec2         (SSM bastion -> reaches prod DB)
-#               └─> dms         (replicates source -> target)
-#   iam ────────────> ec2 / dms
-#   monitoring <──── rds.target / dms / ec2
+#   networking ─┬─> rds.dev   (public, SG-locked — all developers connect here)
+#               ├─> rds.prod  (private — reachable only via the SSM bastion)
+#               └─> ec2       (SSM bastion — the sole human path to the prod DB)
+#   iam ────────────> ec2
+#   monitoring <──── rds.prod / ec2
+#
+# Terraform provisions the infrastructure only. Ansible (ansible/) configures
+# and seeds each database: dev directly, prod through the SSM port-forward.
 ###############################################################################
 
 module "networking" {
@@ -27,24 +29,23 @@ module "networking" {
 module "iam" {
   source = "./modules/iam"
 
-  name_prefix              = local.name_prefix
-  manage_dms_service_roles = var.manage_dms_service_roles
-  tags                     = local.common_tags
+  name_prefix = local.name_prefix
+  tags        = local.common_tags
 }
 
-# --- dev DB (source): public, developer-accessible --------------------------
+# --- dev DB: public, developer-accessible -----------------------------------
 
-module "rds_source" {
+module "rds_dev" {
   source = "./modules/rds"
 
   name_prefix            = local.name_prefix
-  role                   = "source"
+  role                   = "dev"
   subnet_ids             = module.networking.public_subnet_ids
-  vpc_security_group_ids = [module.networking.source_db_security_group_id]
+  vpc_security_group_ids = [module.networking.dev_db_security_group_id]
   publicly_accessible    = true
   engine_version         = var.rds_engine_version
-  instance_class         = var.source_db_instance_class
-  allocated_storage      = var.source_db_allocated_storage
+  instance_class         = var.dev_db_instance_class
+  allocated_storage      = var.dev_db_allocated_storage
   db_name                = var.db_name
   db_port                = var.db_port
   admin_username         = var.rds_admin_user
@@ -54,25 +55,25 @@ module "rds_source" {
   tags                   = local.common_tags
 }
 
-# --- prod DB (target): private, SSM/DMS-only --------------------------------
+# --- prod DB: private, SSM-only ---------------------------------------------
 
-module "rds_target" {
+module "rds_prod" {
   source = "./modules/rds"
 
   name_prefix            = local.name_prefix
-  role                   = "target"
+  role                   = "prod"
   subnet_ids             = module.networking.private_subnet_ids
-  vpc_security_group_ids = [module.networking.rds_security_group_id]
+  vpc_security_group_ids = [module.networking.prod_db_security_group_id]
   publicly_accessible    = false
   engine_version         = var.rds_engine_version
-  instance_class         = var.target_db_instance_class
-  allocated_storage      = var.target_db_allocated_storage
+  instance_class         = var.prod_db_instance_class
+  allocated_storage      = var.prod_db_allocated_storage
   db_name                = var.db_name
   db_port                = var.db_port
   admin_username         = var.rds_admin_user
   admin_password         = var.rds_admin_password
-  multi_az               = var.target_db_multi_az
-  deletion_protection    = var.target_db_deletion_protection
+  multi_az               = var.prod_db_multi_az
+  deletion_protection    = var.prod_db_deletion_protection
   tags                   = local.common_tags
 }
 
@@ -90,47 +91,12 @@ module "ec2" {
   tags                 = local.common_tags
 }
 
-module "dms" {
-  source = "./modules/dms"
-
-  name_prefix                = local.name_prefix
-  subnet_ids                 = module.networking.private_subnet_ids
-  vpc_security_group_ids     = [module.networking.dms_security_group_id]
-  replication_instance_class = var.dms_replication_instance_class
-  engine_version             = var.dms_engine_version
-  allocated_storage          = var.dms_allocated_storage
-  migration_type             = var.dms_migration_type
-  start_replication_task     = var.dms_start_task
-
-  source_endpoint = {
-    server_name   = module.rds_source.address
-    port          = var.db_port
-    database_name = var.db_name
-    username      = var.dms_db_user
-    password      = var.dms_db_password
-  }
-
-  target_endpoint = {
-    server_name   = module.rds_target.address
-    port          = var.db_port
-    database_name = var.db_name
-    username      = var.rds_admin_user
-    password      = var.rds_admin_password
-  }
-
-  tags = local.common_tags
-
-  # DMS in a VPC requires the account-level dms-vpc-role / dms-cloudwatch-logs-role
-  # (created by the iam module) to exist before the replication subnet group.
-  depends_on = [module.iam]
-}
-
 module "monitoring" {
   source = "./modules/monitoring"
 
   name_prefix     = local.name_prefix
   alarm_email     = var.alarm_email
   ec2_instance_id = module.ec2.instance_id
-  rds_instance_id = module.rds_target.instance_id
+  rds_instance_id = module.rds_prod.instance_id
   tags            = local.common_tags
 }

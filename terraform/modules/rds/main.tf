@@ -1,5 +1,11 @@
 ###############################################################################
-# RDS MySQL instance (used for both the source/dev DB and the target/prod DB)
+# RDS MySQL instance (used for both the dev DB and the prod DB)
+#
+#   role = dev  : public (SG-locked to allowed CIDRs) — reachable by developers
+#   role = prod : private (no public endpoint)        — reachable only via SSM
+#
+# The two instances are otherwise identical; the caller varies subnets, security
+# groups, public accessibility, and hardening (Multi-AZ, deletion protection).
 ###############################################################################
 
 locals {
@@ -11,30 +17,6 @@ resource "aws_db_subnet_group" "this" {
   subnet_ids = var.subnet_ids
 
   tags = merge(var.tags, { Name = "${local.name}-subnets" })
-}
-
-# ROW-based binlog is required so this instance can act as a DMS *source*.
-# It is harmless on the target, so both instances get it.
-resource "aws_db_parameter_group" "this" {
-  name        = "${local.name}-mysql8"
-  family      = "mysql8.0"
-  description = "Parameter group for ${local.name}"
-
-  parameter {
-    name  = "binlog_format"
-    value = "ROW"
-  }
-
-  parameter {
-    name  = "binlog_row_image"
-    value = "FULL"
-  }
-
-  tags = var.tags
-
-  lifecycle {
-    create_before_destroy = true
-  }
 }
 
 resource "aws_db_instance" "this" {
@@ -55,11 +37,9 @@ resource "aws_db_instance" "this" {
 
   db_subnet_group_name   = aws_db_subnet_group.this.name
   vpc_security_group_ids = var.vpc_security_group_ids
-  parameter_group_name   = aws_db_parameter_group.this.name
   multi_az               = var.multi_az
   publicly_accessible    = var.publicly_accessible
 
-  # Backups must be enabled for a MySQL instance to serve as a DMS/CDC source.
   backup_retention_period = 7
   skip_final_snapshot     = true
   deletion_protection     = var.deletion_protection
@@ -69,6 +49,6 @@ resource "aws_db_instance" "this" {
 
   tags = merge(var.tags, {
     Name = local.name
-    Role = var.role == "source" ? "dev-database" : "prod-database"
+    Role = "${var.role}-database"
   })
 }

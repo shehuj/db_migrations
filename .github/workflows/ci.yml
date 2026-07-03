@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - "terraform/**"
+      - "ansible/**"
       - ".github/workflows/**"
   workflow_dispatch:
 
@@ -50,3 +51,22 @@ jobs:
           tflint --init
           tflint --recursive
         working-directory: terraform
+
+  ansible:
+    name: Ansible lint & syntax-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Ansible + collection
+        run: |
+          python3 -m pip install --quiet ansible-core ansible-lint PyMySQL
+          ansible-galaxy collection install -r ansible/requirements.yml
+      - name: ansible-lint
+        run: ansible-lint
+        working-directory: ansible
+      - name: Playbook syntax check
+        run: ansible-playbook configure.yml --syntax-check
+        working-directory: ansible

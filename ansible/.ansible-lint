@@ -1,0 +1,5 @@
+# The role consumes connection/config variables supplied by group_vars (shared
+# across the dev and prod tiers), so role-name-prefixed variable names would be
+# misleading. Everything else runs at the default production profile.
+skip_list:
+  - var-naming[no-role-prefix]

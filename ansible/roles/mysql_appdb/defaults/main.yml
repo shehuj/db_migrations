@@ -1,0 +1,13 @@
+---
+# Overridable by group_vars/host_vars. Sensible fallbacks so the role is
+# runnable on its own for testing.
+db_name: appdb
+app_db_user: appuser
+app_db_password: change-me-app-pw
+load_schema: true
+load_seed_data: true
+
+mysql_login_host: 127.0.0.1
+mysql_login_port: 3306
+mysql_login_user: admin
+mysql_login_password: ""

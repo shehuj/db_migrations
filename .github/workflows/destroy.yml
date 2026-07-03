@@ -30,7 +30,6 @@ env:
   AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
   TF_BACKEND_BUCKET: ${{ secrets.TF_BACKEND_BUCKET }}
   TF_BACKEND_TABLE: ${{ secrets.TF_BACKEND_TABLE }}
-  TF_VAR_dms_db_password: ${{ secrets.DMS_DB_PASSWORD }}
   TF_VAR_rds_admin_password: ${{ secrets.RDS_ADMIN_PASSWORD }}
 
 jobs:
@@ -63,18 +62,6 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Stop DMS replication tasks
-        run: |
-          for arn in $(aws dms describe-replication-tasks \
-              --query "ReplicationTasks[?starts_with(ReplicationTaskIdentifier,'aws-db-migration-${ENVIRONMENT}')].ReplicationTaskArn" \
-              --output text); do
-            st=$(aws dms describe-replication-tasks --filters "Name=replication-task-arn,Values=$arn" \
-                 --query 'ReplicationTasks[0].Status' --output text)
-            if [ "$st" = "running" ] || [ "$st" = "starting" ]; then
-              echo "stopping $arn"; aws dms stop-replication-task --replication-task-arn "$arn" || true
-            fi
-          done
-
       - name: Terraform Init
         run: |
           terraform init \
@@ -84,17 +71,18 @@ jobs:
             -backend-config="dynamodb_table=${TF_BACKEND_TABLE}" \
             -backend-config="encrypt=true"
 
-      - name: Disable RDS deletion protection
+      - name: Disable prod RDS deletion protection
         run: |
           terraform apply -input=false -auto-approve \
             -var-file="environments/${ENVIRONMENT}.tfvars" \
-            -var "rds_deletion_protection=false" \
-            -target=module.rds.aws_db_instance.this || true
+            -var "prod_db_deletion_protection=false" \
+            -target=module.rds_prod.aws_db_instance.this || true
 
       - name: Terraform Destroy
         run: |
           terraform destroy -input=false -auto-approve \
-            -var-file="environments/${ENVIRONMENT}.tfvars"
+            -var-file="environments/${ENVIRONMENT}.tfvars" \
+            -var "prod_db_deletion_protection=false"
 
       - name: Sweep orphaned instances
         run: |

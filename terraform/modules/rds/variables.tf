@@ -4,17 +4,17 @@ variable "name_prefix" {
 }
 
 variable "role" {
-  description = "Logical role of this instance: source (dev) or target (prod). Used in names."
+  description = "Logical role of this instance: dev or prod. Used in resource names and tags."
   type        = string
 
   validation {
-    condition     = contains(["source", "target"], var.role)
-    error_message = "role must be source or target."
+    condition     = contains(["dev", "prod"], var.role)
+    error_message = "role must be dev or prod."
   }
 }
 
 variable "subnet_ids" {
-  description = "Subnet IDs for the DB subnet group (public for source, private for target)."
+  description = "Subnet IDs for the DB subnet group (public for dev, private for prod)."
   type        = list(string)
 }
 

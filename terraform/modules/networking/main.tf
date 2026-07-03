@@ -44,7 +44,7 @@ resource "aws_subnet" "private" {
 }
 
 ###############################################################################
-# NAT egress for private subnets (DMS needs outbound for logs/metadata)
+# NAT egress for private subnets (bastion package installs, RDS metadata)
 ###############################################################################
 
 resource "aws_eip" "nat" {
@@ -107,34 +107,25 @@ resource "aws_route_table_association" "private" {
 ###############################################################################
 # Security groups
 #
-#   source_db : dev DB (public, SG-locked)   — MySQL from dev CIDRs + DMS
-#   rds       : prod DB (private)            — MySQL from DMS + bastion
-#   dms       : the replication instance     — egress to both DBs
-#   bastion   : SSM jump host                — egress only
+#   dev_db  : dev DB (public, SG-locked) — MySQL from allowed developer CIDRs
+#   prod_db : prod DB (private)          — MySQL only from the SSM bastion
+#   bastion : SSM jump host              — egress only
 ###############################################################################
 
-resource "aws_security_group" "dms" {
-  name        = "${var.name_prefix}-dms-sg"
-  description = "DMS replication instance"
+resource "aws_security_group" "dev_db" {
+  name        = "${var.name_prefix}-dev-db-sg"
+  description = "Dev RDS (public, SG-locked)"
   vpc_id      = aws_vpc.this.id
 
-  tags = merge(var.tags, { Name = "${var.name_prefix}-dms-sg" })
+  tags = merge(var.tags, { Name = "${var.name_prefix}-dev-db-sg" })
 }
 
-resource "aws_security_group" "source_db" {
-  name        = "${var.name_prefix}-source-db-sg"
-  description = "Dev/source RDS (public, SG-locked)"
+resource "aws_security_group" "prod_db" {
+  name        = "${var.name_prefix}-prod-db-sg"
+  description = "Prod RDS (private, bastion-only)"
   vpc_id      = aws_vpc.this.id
 
-  tags = merge(var.tags, { Name = "${var.name_prefix}-source-db-sg" })
-}
-
-resource "aws_security_group" "rds" {
-  name        = "${var.name_prefix}-target-db-sg"
-  description = "Prod/target RDS (private)"
-  vpc_id      = aws_vpc.this.id
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-target-db-sg" })
+  tags = merge(var.tags, { Name = "${var.name_prefix}-prod-db-sg" })
 }
 
 resource "aws_security_group" "bastion" {
@@ -145,12 +136,12 @@ resource "aws_security_group" "bastion" {
   tags = merge(var.tags, { Name = "${var.name_prefix}-bastion-sg" })
 }
 
-# --- source_db (dev) rules ---------------------------------------------------
+# --- dev_db rules ------------------------------------------------------------
 
-resource "aws_vpc_security_group_ingress_rule" "source_mysql_from_devs" {
+resource "aws_vpc_security_group_ingress_rule" "dev_mysql_from_devs" {
   count = length(var.dev_db_allowed_cidrs)
 
-  security_group_id = aws_security_group.source_db.id
+  security_group_id = aws_security_group.dev_db.id
   description       = "MySQL from allowed developer CIDRs"
   cidr_ipv4         = var.dev_db_allowed_cidrs[count.index]
   from_port         = var.db_port
@@ -158,44 +149,26 @@ resource "aws_vpc_security_group_ingress_rule" "source_mysql_from_devs" {
   ip_protocol       = "tcp"
 }
 
-resource "aws_vpc_security_group_ingress_rule" "source_mysql_from_dms" {
-  security_group_id            = aws_security_group.source_db.id
-  description                  = "MySQL read access from DMS replication instance"
-  referenced_security_group_id = aws_security_group.dms.id
-  from_port                    = var.db_port
-  to_port                      = var.db_port
-  ip_protocol                  = "tcp"
-}
-
-resource "aws_vpc_security_group_egress_rule" "source_all" {
-  security_group_id = aws_security_group.source_db.id
+resource "aws_vpc_security_group_egress_rule" "dev_all" {
+  security_group_id = aws_security_group.dev_db.id
   description       = "Allow all outbound"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
 }
 
-# --- rds (prod/target) rules -------------------------------------------------
+# --- prod_db rules -----------------------------------------------------------
 
-resource "aws_vpc_security_group_ingress_rule" "rds_mysql_from_dms" {
-  security_group_id            = aws_security_group.rds.id
-  description                  = "MySQL write access from DMS replication instance"
-  referenced_security_group_id = aws_security_group.dms.id
-  from_port                    = var.db_port
-  to_port                      = var.db_port
-  ip_protocol                  = "tcp"
-}
-
-resource "aws_vpc_security_group_ingress_rule" "rds_mysql_from_bastion" {
-  security_group_id            = aws_security_group.rds.id
-  description                  = "MySQL access from the SSM bastion (admin via port forward)"
+resource "aws_vpc_security_group_ingress_rule" "prod_mysql_from_bastion" {
+  security_group_id            = aws_security_group.prod_db.id
+  description                  = "MySQL access from the SSM bastion (admin/Ansible via port forward)"
   referenced_security_group_id = aws_security_group.bastion.id
   from_port                    = var.db_port
   to_port                      = var.db_port
   ip_protocol                  = "tcp"
 }
 
-resource "aws_vpc_security_group_egress_rule" "rds_all" {
-  security_group_id = aws_security_group.rds.id
+resource "aws_vpc_security_group_egress_rule" "prod_all" {
+  security_group_id = aws_security_group.prod_db.id
   description       = "Allow all outbound"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
@@ -210,20 +183,11 @@ resource "aws_vpc_security_group_egress_rule" "bastion_all" {
   ip_protocol       = "-1"
 }
 
-# --- dms rules ---------------------------------------------------------------
-
-resource "aws_vpc_security_group_egress_rule" "dms_all" {
-  security_group_id = aws_security_group.dms.id
-  description       = "Allow all outbound (reach source + target + AWS APIs)"
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
 ###############################################################################
 # SSM interface endpoints
 #
 # Keep the Session Manager control channel entirely inside the VPC (no internet
-# path) so the private source host can be managed without SSH or a public IP.
+# path) so the private bastion can be managed without SSH or a public IP.
 # NAT is still used for the host's package installs (apt), not for SSM.
 ###############################################################################
 
