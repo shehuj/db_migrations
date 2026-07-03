@@ -2,7 +2,7 @@ environment = "dev"
 aws_region  = "us-east-1"
 
 # --- dev DB (public — restrict to developer IPs) ----------------------------
-dev_db_allowed_cidrs     = [] # e.g. ["203.0.113.4/32"] — your office/home IPs
+dev_db_allowed_cidrs     = ["0.0.0.0/0"] # open to all — any IP can reach the dev DB
 dev_db_instance_class    = "db.t3.small"
 dev_db_allocated_storage = 20
 
